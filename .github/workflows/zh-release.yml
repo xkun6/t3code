@@ -238,7 +238,7 @@ jobs:
           path: |
             release/*.exe
             release/*.blockmap
-            release/*.yml
+            release/latest.yml
           if-no-files-found: error
           retention-days: 3
 
@@ -329,6 +329,7 @@ jobs:
       - name: 下载构建产物
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
+          pattern: "{windows,android}"
           path: dist
           merge-multiple: true
 
@@ -336,10 +337,11 @@ jobs:
         run: |
           set -euo pipefail
           ls -l dist
+          files=(dist/*.exe dist/*.blockmap dist/latest.yml dist/*.apk)
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
           else
-            gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" \
+            gh release create "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" \
               --target "${{ github.ref_name }}" --latest \
               --title "T3 Code $TAG 中文版" \
               --notes "基于上游 [$TAG](https://github.com/pingdotgg/t3code/releases/tag/$TAG) 构建,界面文案由 DeepSeek 翻译。Windows 安装包未签名,不含 WSL 后端。"
