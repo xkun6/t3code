@@ -1,17 +1,15 @@
 // Asks the model to wire the overlay into files whose anchors apply.cjs could not find.
 // Accepts an edit only when it keeps every original line in order and adds the marker,
 // so a bad answer can add code but never delete or rewrite upstream code.
-// Env: same as translate.cjs. Usage: node zh/repair.cjs
+// Env: see llm.cjs. Usage: node zh/repair.cjs
 "use strict";
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { completeJson } = require("./llm.cjs");
 
 const ROOT = process.env.T3CODE_ZH_ROOT || path.resolve(__dirname, "..");
 const FAILURES_PATH = path.join(__dirname, ".cache", "apply-failures.json");
-const apiKey = process.env.DEEPSEEK_API_KEY?.trim();
-const baseUrl = (process.env.DEEPSEEK_BASE_URL?.trim() || "https://api.deepseek.com").replace(/\/+$/, "");
-const model = process.env.DEEPSEEK_MODEL?.trim() || "deepseek-chat";
 
 async function askForFile(failure, source, feedback) {
   const prompt = [
@@ -23,22 +21,11 @@ async function askForFile(failure, source, feedback) {
     "",
     source,
   ].join("\n");
-  const response = await fetch(`${baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model,
-      temperature: 0,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: "You make minimal, additive edits to build configuration files." },
-        { role: "user", content: prompt },
-      ],
-    }),
-    signal: AbortSignal.timeout(180_000),
+  const reply = await completeJson({
+    system: "You make minimal, additive edits to build configuration files.",
+    user: prompt,
   });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return JSON.parse((await response.json()).choices[0].message.content).content;
+  return reply.content;
 }
 
 /** Null when `next` keeps every line of `original` in order and only adds marked lines. */
@@ -61,7 +48,6 @@ function rejectReason(original, next, mark) {
 async function main() {
   const failures = fs.existsSync(FAILURES_PATH) ? JSON.parse(fs.readFileSync(FAILURES_PATH, "utf8")) : [];
   if (failures.length === 0) return;
-  if (!apiKey) throw new Error("DEEPSEEK_API_KEY is not set.");
   for (const failure of failures) {
     const full = path.join(ROOT, failure.file);
     const source = fs.readFileSync(full, "utf8");

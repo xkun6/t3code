@@ -101,6 +101,7 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           DEEPSEEK_BASE_URL: ${{ secrets.DEEPSEEK_BASE_URL }}
           DEEPSEEK_MODEL: ${{ secrets.DEEPSEEK_MODEL }}
+          DEEPSEEK_PROTOCOL: ${{ secrets.DEEPSEEK_PROTOCOL }}
         run: |
           set -uo pipefail
           node zh/apply.cjs
@@ -130,6 +131,7 @@ jobs:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           DEEPSEEK_BASE_URL: ${{ secrets.DEEPSEEK_BASE_URL }}
           DEEPSEEK_MODEL: ${{ secrets.DEEPSEEK_MODEL }}
+          DEEPSEEK_PROTOCOL: ${{ secrets.DEEPSEEK_PROTOCOL }}
         run: node zh/translate.cjs
 
       # 翻译失败也先把已翻译的部分存下来,下次只补剩下的。

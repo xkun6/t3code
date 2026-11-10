@@ -1,21 +1,15 @@
-// Translates the strings extract.cjs reported missing with an OpenAI-compatible chat API
-// (DeepSeek by default) and merges the results into locales/zh-Hans.json.
-// Env: DEEPSEEK_API_KEY (required), DEEPSEEK_BASE_URL (default https://api.deepseek.com),
-//      DEEPSEEK_MODEL (default deepseek-chat).
+// Translates the strings extract.cjs reported missing (DeepSeek by default; see llm.cjs for the
+// protocol and environment) and merges the results into locales/zh-Hans.json.
 // Usage: node zh/translate.cjs [--missing zh/.cache/missing.json] [--limit N]
 "use strict";
 
 const fs = require("node:fs");
 const path = require("node:path");
 const { DICT_PATH, checkTranslation } = require("./localize.cjs");
+const { completeJson, protocol, model } = require("./llm.cjs");
 
 const BATCH_SIZE = 60;
 const CONCURRENCY = 4;
-const ATTEMPTS = 3;
-
-const apiKey = process.env.DEEPSEEK_API_KEY?.trim();
-const baseUrl = (process.env.DEEPSEEK_BASE_URL?.trim() || "https://api.deepseek.com").replace(/\/+$/, "");
-const model = process.env.DEEPSEEK_MODEL?.trim() || "deepseek-chat";
 
 const guide = fs.readFileSync(path.join(__dirname, "TRANSLATION_GUIDE.md"), "utf8");
 const SYSTEM_PROMPT = `${guide}
@@ -37,35 +31,13 @@ function writeDictionary(dictionary) {
   fs.renameSync(temp, DICT_PATH);
 }
 
-async function chat(messages) {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      const response = await fetch(`${baseUrl}/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({ model, messages, temperature: 0.2, response_format: { type: "json_object" } }),
-        signal: AbortSignal.timeout(180_000),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
-      const body = await response.json();
-      return JSON.parse(body.choices[0].message.content);
-    } catch (error) {
-      if (attempt >= ATTEMPTS) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
-    }
-  }
-}
-
 /** Translates one batch; entries that fail validation are retried once with the reason attached. */
 async function translateBatch(entries) {
   const accepted = {};
   let pending = entries;
   for (let round = 0; round < 2 && pending.length > 0; round++) {
     const request = pending.map((entry) => ({ k: entry.key, f: entry.files[0], ...(entry.problem ? { fix: entry.problem } : {}) }));
-    const result = await chat([
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: JSON.stringify(request) },
-    ]);
+    const result = await completeJson({ system: SYSTEM_PROMPT, user: JSON.stringify(request), temperature: 0.2 });
     const retry = [];
     for (const entry of pending) {
       const translation = result?.[entry.key];
@@ -79,10 +51,6 @@ async function translateBatch(entries) {
 }
 
 async function main() {
-  if (!apiKey) {
-    console.error("DEEPSEEK_API_KEY is not set.");
-    process.exit(1);
-  }
   const args = process.argv.slice(2);
   const missingIndex = args.indexOf("--missing");
   const limitIndex = args.indexOf("--limit");
@@ -96,7 +64,7 @@ async function main() {
 
   const batches = [];
   for (let i = 0; i < missing.length; i += BATCH_SIZE) batches.push(missing.slice(i, i + BATCH_SIZE));
-  console.log(`Translating ${missing.length} strings in ${batches.length} batches with ${model}.`);
+  console.log(`Translating ${missing.length} strings in ${batches.length} batches with ${model} (${protocol}).`);
 
   const dictionary = readDictionary();
   const rejected = [];

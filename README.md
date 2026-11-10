@@ -14,7 +14,8 @@
    | 名称 | 必填 | 说明 |
    | --- | --- | --- |
    | `DEEPSEEK_API_KEY` | 是 | 建议单独建一个、只充少量余额的 key |
-   | `DEEPSEEK_BASE_URL` | 否 | 默认 `https://api.deepseek.com`,任何 OpenAI 兼容地址都行(会请求 `<地址>/chat/completions`) |
+   | `DEEPSEEK_PROTOCOL` | 否 | `anthropic`(默认,Anthropic Messages)或 `responses`(OpenAI Responses) |
+   | `DEEPSEEK_BASE_URL` | 否 | `anthropic` 默认 `https://api.deepseek.com/anthropic`,请求 `<地址>/v1/messages`;`responses` 默认 `https://api.openai.com/v1`,请求 `<地址>/responses` |
    | `DEEPSEEK_MODEL` | 否 | 默认 `deepseek-chat` |
    | `ANDROID_KEYSTORE_BASE64` | 否 | APK 签名用的 keystore(base64)。不配就是调试签名 |
    | `ANDROID_KEYSTORE_PASSWORD` | 否 | keystore 密码 |
