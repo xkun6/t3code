@@ -24,6 +24,10 @@ const ATTR_PATTERN =
   /^(title|placeholder|label|alt|aria-label|aria-description|aria-placeholder|aria-valuetext|tooltip|description|heading|subtitle|caption|hint|helperText|emptyText|emptyMessage|message|text|accessibilityLabel|accessibilityHint|confirmLabel|cancelLabel|submitLabel|actionLabel|buttonLabel)$|(Label|Title|Description|Placeholder|Tooltip|Hint|Message)$/;
 const PROP_PATTERN =
   /^(label|title|description|placeholder|message|tooltip|heading|subtitle|caption|hint|detail|helperText|emptyText|emptyMessage|accessibilityLabel|accessibilityHint|ariaLabel|confirmLabel|cancelLabel|submitLabel|actionLabel|buttonLabel|buttons|headerTitle|tabBarLabel|title_)$|(Label|Title|Description|Placeholder|Tooltip|Hint|Message)$/;
+// Constants and helpers named like copy (SECTION_LABELS, SAVE_MESSAGE, stepLabel): every string
+// they hold or return is UI text.
+const COPY_NAME_PATTERN =
+  /(^|_)(LABELS?|TITLES?|SUBTITLES?|DESCRIPTIONS?|HEADINGS?|MESSAGES?|HINTS?|PLACEHOLDERS?|TOOLTIPS?|COPY)$|(^|[a-z])(Labels?|Titles?|Subtitles?|Descriptions?|Headings?|Messages?|Hints?|Placeholders?|Tooltips?|Copy)$|^(labels?|titles?|copy)$/;
 // Reads compared against string literals; those literals follow the label's translation.
 const COMPARED_NAMES = /^(label|title|placeholder|description|heading)$/;
 const CALL_NAMES = new Set(["toast", "alert", "confirm", "prompt", "showToast", "notify"]);
@@ -296,6 +300,40 @@ function visitModule(code, file, onString) {
     }
   };
 
+  const returnedValues = (body) => {
+    const visit = (node) => {
+      if (!node || typeof node.type !== "string") return;
+      if (/Function/.test(node.type)) return;
+      if (node.type === "ReturnStatement") return copyValue(node.argument);
+      for (const key in node) {
+        const value = node[key];
+        if (Array.isArray(value)) value.forEach(visit);
+        else if (value && typeof value.type === "string") visit(value);
+      }
+    };
+    visit(body);
+  };
+
+  // Every string a copy-named constant holds, including nested objects and what helpers return.
+  const copyValue = (node) => {
+    if (!node) return;
+    switch (node.type) {
+      case "ParenthesizedExpression":
+      case "TSAsExpression":
+      case "TSSatisfiesExpression":
+      case "TSNonNullExpression":
+        return copyValue(node.expression);
+      case "ObjectExpression":
+        return node.properties.forEach((property) => property.type === "Property" && copyValue(property.value));
+      case "ArrowFunctionExpression":
+      case "FunctionExpression":
+      case "FunctionDeclaration":
+        return node.body?.type === "BlockStatement" ? returnedValues(node.body) : copyValue(node.body);
+      default:
+        return stringPositions(node, "const");
+    }
+  };
+
   const walk = (node, parent) => {
     if (!node || typeof node.type !== "string") return;
     switch (node.type) {
@@ -335,6 +373,14 @@ function visitModule(code, file, onString) {
       case "Property": {
         const name = propertyKeyName(node);
         if (name && PROP_PATTERN.test(name) && !node.method) stringPositions(node.value, "prop");
+        break;
+      }
+      case "VariableDeclarator": {
+        if (node.id.type === "Identifier" && COPY_NAME_PATTERN.test(node.id.name)) copyValue(node.init);
+        break;
+      }
+      case "FunctionDeclaration": {
+        if (node.id && COPY_NAME_PATTERN.test(node.id.name)) copyValue(node);
         break;
       }
       case "BinaryExpression": {

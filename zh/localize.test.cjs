@@ -56,6 +56,19 @@ test("comparisons with translated labels keep matching", () => {
   );
 });
 
+test("copy constants translate every string value", () => {
+  assert.equal(
+    run(
+      'export const SECTION_LABELS = { "/settings/a": "Commit", nested: { b: "Push" } } as const;\n' +
+        'const stepLabel = (t) => { if (t) return "Close"; return `Open ${t} in ${app}`; };\n' +
+        'const SAVE_MESSAGE = "Failed to save"; function backTitle() { return "Go back"; }',
+    ),
+    'export const SECTION_LABELS = { "/settings/a": "提交", nested: { b: "推送" } } as const;\n' +
+      'const stepLabel = (t) => { if (t) return "关闭"; return `在 ${app} 中打开 ${t}`; };\n' +
+      'const SAVE_MESSAGE = "保存失败"; function backTitle() { return "返回"; }',
+  );
+});
+
 test("non-UI strings stay as they are", () => {
   const code = 'const mode = "Commit"; fetch("Go back"); const k = { kind: "Push" };';
   assert.equal(run(code), code);
