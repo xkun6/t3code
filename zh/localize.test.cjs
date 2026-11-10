@@ -54,6 +54,10 @@ test("comparisons with translated labels keep matching", () => {
     run('const items = [{ label: "Commit" }]; if (item.label === "Commit") icon(); switch (a.label) { case "Push": break; }'),
     'const items = [{ label: "提交" }]; if (item.label === "提交") icon(); switch (a.label) { case "推送": break; }',
   );
+  assert.equal(
+    run('const branchLabel = ref ?? "Push"; if (branchLabel === "Push") x(); if (detail === "Commit") y();'),
+    'const branchLabel = ref ?? "推送"; if (branchLabel === "推送") x(); if (detail === "提交") y();',
+  );
 });
 
 test("copy constants translate every string value", () => {
@@ -67,6 +71,27 @@ test("copy constants translate every string value", () => {
       'const stepLabel = (t) => { if (t) return "关闭"; return `在 ${app} 中打开 ${t}`; };\n' +
       'const SAVE_MESSAGE = "保存失败"; function backTitle() { return "返回"; }',
   );
+});
+
+test("arguments bound to copy-named parameters translate", () => {
+  assert.equal(
+    run(
+      'const page = (target, icon, label) => ({ target, icon, label });\n' +
+        'function settingsPage(title: string) { return { title }; }\n' +
+        'const rows = [page("Push", "gear", "Commit"), settingsPage("Close")]; const d = <E detail="Go back" />;',
+    ),
+    'const page = (target, icon, label) => ({ target, icon, label });\n' +
+      'function settingsPage(title: string) { return { title }; }\n' +
+      'const rows = [page("Push", "gear", "提交"), settingsPage("关闭")]; const d = <E detail="返回" />;',
+  );
+});
+
+test("per-file overrides win over the dictionary", () => {
+  const { __setOverridesForTest } = require("./localize.cjs");
+  __setOverridesForTest({ "apps/web/src/Example.tsx": { Commit: "Commit" } });
+  assert.equal(run("const a = <b>Commit</b>;"), "const a = <b>Commit</b>;");
+  __setOverridesForTest({});
+  assert.equal(run("const a = <b>Commit</b>;"), "const a = <b>提交</b>;");
 });
 
 test("non-UI strings stay as they are", () => {

@@ -9,6 +9,8 @@ const MagicString = require("magic-string").default;
 
 const ROOT = process.env.T3CODE_ZH_ROOT || path.resolve(__dirname, "..");
 const DICT_PATH = path.join(__dirname, "locales", "zh-Hans.json");
+// Hand-written exceptions by repo-relative file, e.g. "Code" in the brand lockup stays English.
+const OVERRIDES_PATH = path.join(__dirname, "locales", "overrides.json");
 
 // Directories whose sources ship in a client UI (relative to the repo root).
 const SOURCE_DIRS = [
@@ -21,7 +23,7 @@ const SOURCE_DIRS = [
 ];
 
 const ATTR_PATTERN =
-  /^(title|placeholder|label|alt|aria-label|aria-description|aria-placeholder|aria-valuetext|tooltip|description|heading|subtitle|caption|hint|helperText|emptyText|emptyMessage|message|text|accessibilityLabel|accessibilityHint|confirmLabel|cancelLabel|submitLabel|actionLabel|buttonLabel)$|(Label|Title|Description|Placeholder|Tooltip|Hint|Message)$/;
+  /^(title|placeholder|label|alt|aria-label|aria-description|aria-placeholder|aria-valuetext|tooltip|description|heading|subtitle|caption|hint|helperText|emptyText|emptyMessage|message|text|accessibilityLabel|accessibilityHint|confirmLabel|cancelLabel|submitLabel|actionLabel|buttonLabel|detail)$|(Label|Title|Description|Placeholder|Tooltip|Hint|Message)$/;
 const PROP_PATTERN =
   /^(label|title|description|placeholder|message|tooltip|heading|subtitle|caption|hint|detail|helperText|emptyText|emptyMessage|accessibilityLabel|accessibilityHint|ariaLabel|confirmLabel|cancelLabel|submitLabel|actionLabel|buttonLabel|buttons|headerTitle|tabBarLabel|title_)$|(Label|Title|Description|Placeholder|Tooltip|Hint|Message)$/;
 // Constants and helpers named like copy (SECTION_LABELS, SAVE_MESSAGE, stepLabel): every string
@@ -29,7 +31,7 @@ const PROP_PATTERN =
 const COPY_NAME_PATTERN =
   /(^|_)(LABELS?|TITLES?|SUBTITLES?|DESCRIPTIONS?|HEADINGS?|MESSAGES?|HINTS?|PLACEHOLDERS?|TOOLTIPS?|COPY)$|(^|[a-z])(Labels?|Titles?|Subtitles?|Descriptions?|Headings?|Messages?|Hints?|Placeholders?|Tooltips?|Copy)$|^(labels?|titles?|copy)$/;
 // Reads compared against string literals; those literals follow the label's translation.
-const COMPARED_NAMES = /^(label|title|placeholder|description|heading)$/;
+const COMPARED_NAMES = /^(label|title|placeholder|description|heading|detail)$|[a-z](Label|Title)$/;
 const CALL_NAMES = new Set(["toast", "alert", "confirm", "prompt", "showToast", "notify"]);
 const CALL_MEMBERS = new Set([
   "toast.success",
@@ -334,6 +336,37 @@ function visitModule(code, file, onString) {
     }
   };
 
+  // Same-file helpers whose parameters are named like copy: `page(target, icon, label)`.
+  const COPY_PARAM = /^(label|title|subtitle|description|message|placeholder|heading|hint|tooltip|detail)$/;
+  const copyParams = new Map();
+  const collectCopyParams = (node) => {
+    if (!node || typeof node.type !== "string") return;
+    let name = null;
+    let fn = null;
+    if (node.type === "FunctionDeclaration" && node.id) [name, fn] = [node.id.name, node];
+    else if (
+      node.type === "VariableDeclarator" &&
+      node.id.type === "Identifier" &&
+      /^(ArrowFunctionExpression|FunctionExpression)$/.test(node.init?.type ?? "")
+    ) {
+      [name, fn] = [node.id.name, node.init];
+    }
+    if (fn) {
+      const indices = new Set();
+      fn.params.forEach((param, index) => {
+        const id = param.type === "AssignmentPattern" ? param.left : param;
+        if (id.type === "Identifier" && (COPY_PARAM.test(id.name) || COPY_NAME_PATTERN.test(id.name))) indices.add(index);
+      });
+      if (indices.size > 0) copyParams.set(name, indices);
+    }
+    for (const key in node) {
+      const value = node[key];
+      if (Array.isArray(value)) value.forEach(collectCopyParams);
+      else if (value && typeof value.type === "string") collectCopyParams(value);
+    }
+  };
+  collectCopyParams(parsed.program);
+
   const walk = (node, parent) => {
     if (!node || typeof node.type !== "string") return;
     switch (node.type) {
@@ -402,6 +435,8 @@ function visitModule(code, file, onString) {
         if (name && (CALL_NAMES.has(name) || CALL_MEMBERS.has(name))) {
           node.arguments.slice(0, 2).forEach((argument) => stringPositions(argument, "call"));
         }
+        const indices = node.callee.type === "Identifier" ? copyParams.get(node.callee.name) : undefined;
+        indices?.forEach((index) => stringPositions(node.arguments[index], "call"));
         break;
       }
       case "ImportDeclaration":
@@ -433,6 +468,12 @@ function loadDictionary() {
   return dictionaryCache;
 }
 
+let overridesCache = null;
+function loadOverrides() {
+  overridesCache ??= fs.existsSync(OVERRIDES_PATH) ? JSON.parse(fs.readFileSync(OVERRIDES_PATH, "utf8")) : {};
+  return overridesCache;
+}
+
 function isEnabled() {
   return process.env.T3CODE_LOCALE === "zh-Hans";
 }
@@ -441,10 +482,11 @@ function isEnabled() {
 function localizeWithMap(code, file) {
   if (!isEnabled() || !isSourceFile(file)) return null;
   const dictionary = loadDictionary();
+  const overrides = loadOverrides()[path.relative(ROOT, file).split(path.sep).join("/")];
   let changed = false;
   const ms = visitModule(code, file, ({ key, replace }) => {
-    const translation = dictionary.get(key);
-    if (translation === undefined || checkTranslation(key, translation) !== null) return;
+    const translation = overrides?.[key] ?? dictionary.get(key);
+    if (translation === undefined || translation === key || checkTranslation(key, translation) !== null) return;
     replace(translation);
     changed = true;
   });
@@ -469,5 +511,8 @@ module.exports = {
   checkTranslation,
   __setDictionaryForTest: (map) => {
     dictionaryCache = map;
+  },
+  __setOverridesForTest: (overrides) => {
+    overridesCache = overrides;
   },
 };

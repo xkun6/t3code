@@ -55,7 +55,9 @@ jobs:
           fi
           [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "无效的标签: $tag" >&2; exit 1; }
           build=true
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 && [[ "$REBUILD" != "true" ]]; then
+          # A draft left by a failed publish does not count as released.
+          draft="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft 2>/dev/null || echo missing)"
+          if [[ "$draft" == "false" && "$REBUILD" != "true" ]]; then
             build=false
             echo "$tag 已发布过,跳过。"
           fi
@@ -340,6 +342,7 @@ jobs:
           files=(dist/*.exe dist/*.blockmap dist/latest.yml dist/*.apk)
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
           else
             gh release create "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" \
               --target "${{ github.ref_name }}" --latest \
