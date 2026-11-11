@@ -164,6 +164,7 @@ jobs:
             src/apps/web/vite.config.ts
             src/apps/desktop/vite.config.ts
             src/apps/mobile/metro.config.js
+            src/apps/mobile/modules/t3-native-controls/android/src/main/java/expo/modules/t3nativecontrols/T3WorkspaceNavigationModule.kt
           if-no-files-found: error
           retention-days: 3
 

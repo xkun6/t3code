@@ -276,6 +276,8 @@ function visitModule(code, file, onString) {
     });
   };
 
+  // Names read as `TABLE[key]` in a string position; resolved after the walk.
+  const lookupTables = new Set();
   // String positions: the values an expression can evaluate to without calling anything.
   const stringPositions = (node, kind) => {
     if (!node) return;
@@ -297,6 +299,9 @@ function visitModule(code, file, onString) {
         return stringPositions(node.expression, kind);
       case "ArrayExpression":
         return node.elements.forEach((element) => stringPositions(element, kind));
+      case "MemberExpression":
+        if (node.computed && node.object.type === "Identifier") lookupTables.add(node.object.name);
+        return;
       default:
         return;
     }
@@ -339,8 +344,12 @@ function visitModule(code, file, onString) {
   // Same-file helpers whose parameters are named like copy: `page(target, icon, label)`.
   const COPY_PARAM = /^(label|title|subtitle|description|message|placeholder|heading|hint|tooltip|detail)$/;
   const copyParams = new Map();
-  const collectCopyParams = (node) => {
+  const declarations = new Map();
+  const collectDeclarations = (node) => {
     if (!node || typeof node.type !== "string") return;
+    if (node.type === "VariableDeclarator" && node.id.type === "Identifier" && node.init) {
+      declarations.set(node.id.name, node.init);
+    }
     let name = null;
     let fn = null;
     if (node.type === "FunctionDeclaration" && node.id) [name, fn] = [node.id.name, node];
@@ -361,11 +370,11 @@ function visitModule(code, file, onString) {
     }
     for (const key in node) {
       const value = node[key];
-      if (Array.isArray(value)) value.forEach(collectCopyParams);
-      else if (value && typeof value.type === "string") collectCopyParams(value);
+      if (Array.isArray(value)) value.forEach(collectDeclarations);
+      else if (value && typeof value.type === "string") collectDeclarations(value);
     }
   };
-  collectCopyParams(parsed.program);
+  collectDeclarations(parsed.program);
 
   const walk = (node, parent) => {
     if (!node || typeof node.type !== "string") return;
@@ -457,6 +466,12 @@ function visitModule(code, file, onString) {
   };
 
   walk(parsed.program, null);
+  // A same-file object read as `TABLE[key]` in a UI position (`label={STATES[state]}`) holds copy.
+  for (const name of lookupTables) {
+    let init = declarations.get(name);
+    while (init && /^(ParenthesizedExpression|TSAsExpression|TSSatisfiesExpression)$/.test(init.type)) init = init.expression;
+    if (init?.type === "ObjectExpression" && !COPY_NAME_PATTERN.test(name)) copyValue(init);
+  }
   return ms;
 }
 

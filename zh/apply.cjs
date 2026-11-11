@@ -62,6 +62,44 @@ const EDITS = [
   },
 ];
 
+// Native UI the Metro localizer never sees. Each anchor matches one whole function, whose quoted
+// keys become their dictionary translation. A missing anchor only warns: repair.cjs can add lines
+// but not rewrite them, and an English tab bar should not block a release.
+const NATIVE_EDITS = [
+  {
+    file: "apps/mobile/modules/t3-native-controls/android/src/main/java/expo/modules/t3nativecontrols/T3WorkspaceNavigationModule.kt",
+    anchors: [
+      /private fun tabTitle\(tab: String\) = when \(tab\) \{[^}]*\}/,
+      /private fun expandedTabTitle\(tab: String\) =\s*[^\n]*/,
+    ],
+    keys: ["Chats", "Pulls", "Usage", "Settings", "Pull Requests"],
+  },
+];
+
+function applyNative(edit, dictionary) {
+  const full = path.join(ROOT, edit.file);
+  let source = fs.readFileSync(full, "utf8");
+  if (source.includes(MARK)) return console.log(`already applied: ${edit.file}`);
+  const missing = edit.anchors.filter((anchor) => !anchor.test(source));
+  if (missing.length > 0) {
+    return console.warn(`::warning::native strings stay English, anchor not found in ${edit.file}: ${missing.join(", ")}`);
+  }
+  const untranslated = edit.keys.filter((key) => !dictionary[key]);
+  if (untranslated.length > 0) console.warn(`::warning::no translation for ${untranslated.join(", ")} in ${edit.file}`);
+  for (const anchor of edit.anchors) {
+    source = source.replace(anchor, (match) => {
+      let next = match;
+      for (const key of edit.keys) {
+        if (dictionary[key]) next = next.replaceAll(JSON.stringify(key), JSON.stringify(dictionary[key]));
+      }
+      // A trailing comment on the function's first line is valid Kotlin.
+      return next.replace("\n", ` // ${MARK}\n`);
+    });
+  }
+  fs.writeFileSync(full, source);
+  console.log(`applied: ${edit.file}`);
+}
+
 function main() {
   const failures = [];
   for (const edit of EDITS) {
@@ -84,6 +122,8 @@ function main() {
     fs.writeFileSync(full, source);
     console.log(`applied: ${edit.file}`);
   }
+  const dictionary = JSON.parse(fs.readFileSync(path.join(__dirname, "locales", "zh-Hans.json"), "utf8"));
+  for (const edit of NATIVE_EDITS) applyNative(edit, dictionary);
   fs.mkdirSync(path.dirname(FAILURES_PATH), { recursive: true });
   fs.writeFileSync(FAILURES_PATH, JSON.stringify(failures, null, 2) + "\n");
   if (failures.length > 0) process.exit(2);

@@ -86,6 +86,17 @@ test("arguments bound to copy-named parameters translate", () => {
   );
 });
 
+test("lookup tables read in UI positions translate their values", () => {
+  assert.equal(
+    run(
+      'const STATES = { open: "Open", closed: "Close" } as const;\n' +
+        'const a = <Menu label={STATES[state]}>{MODES[m]}</Menu>; const MODES = { a: "Push" };',
+    ),
+    'const STATES = { open: "打开", closed: "关闭" } as const;\n' +
+      'const a = <Menu label={STATES[state]}>{MODES[m]}</Menu>; const MODES = { a: "推送" };',
+  );
+});
+
 test("per-file overrides win over the dictionary", () => {
   const { __setOverridesForTest } = require("./localize.cjs");
   __setOverridesForTest({ "apps/web/src/Example.tsx": { Commit: "Commit" } });
@@ -95,7 +106,9 @@ test("per-file overrides win over the dictionary", () => {
 });
 
 test("non-UI strings stay as they are", () => {
-  const code = 'const mode = "Commit"; fetch("Go back"); const k = { kind: "Push" };';
+  const code =
+    'const mode = "Commit"; fetch("Go back"); const k = { kind: "Push" };' +
+    'const MODES = { a: "Close" }; send(MODES[m]); const b = <B label={props[k]} />;';
   assert.equal(run(code), code);
 });
 

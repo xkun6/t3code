@@ -1,5 +1,6 @@
 {
   "apps/mobile/src/components/CompactBrandTitle.tsx": { "Code": "Code" },
+  "apps/mobile/src/features/pull-requests/PullRequestListFilters.tsx": { "Open": "开放中" },
   "apps/web/src/components/sidebar/SidebarChrome.tsx": { "Code": "Code" },
   "apps/web/src/components/ui/standalone-page.tsx": { "Code": "Code" }
 }
