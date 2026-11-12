@@ -16,6 +16,10 @@ const VITE_IMPORT =
   `import * as zhModule from "node:module"; // ${MARK}\n` +
   `const { zhLocalePlugin } = zhModule.createRequire(import.meta.url)("../../zh/vite-plugin.cjs"); // ${MARK}\n`;
 
+const SERVER_VITE_IMPORT =
+  `import * as zhModule from "node:module"; // ${MARK}\n` +
+  `const { zhServerPlugin } = zhModule.createRequire(import.meta.url)("../../zh/vite-plugin.cjs"); // ${MARK}\n`;
+
 const EDITS = [
   {
     file: "apps/web/vite.config.ts",
@@ -44,6 +48,33 @@ const EDITS = [
       {
         anchor: /^(\s*)entry: \["src\/main\.ts"\],\n/m,
         insert: (match, indent) => `${match}${indent}plugins: [zhLocalePlugin()], // ${MARK}\n`,
+      },
+    ],
+  },
+  {
+    file: "apps/server/vite.config.ts",
+    goal:
+      'Load `{ zhServerPlugin }` from "../../zh/vite-plugin.cjs" at runtime with `createRequire(import.meta.url)` from "node:module" (not a static import, which Vite would inline into its config bundle) and add `plugins: [zhServerPlugin()],` to the `pack` object in `defineConfig`.',
+    steps: [
+      {
+        anchor: /^import \{ defineConfig[^\n]*\n/m,
+        insert: (match) => `${match}${SERVER_VITE_IMPORT}`,
+      },
+      {
+        anchor: /^(\s*)pack:\s*\{\n/m,
+        insert: (match, indent) => `${match}${indent}  plugins: [zhServerPlugin()], // ${MARK}\n`,
+      },
+    ],
+  },
+  {
+    file: "apps/server/src/bin.ts",
+    goal:
+      'Inside `loadCliMain`, before `if (!NodeSea.isSea()) return import("./binMain.ts");`, register "../../zh/server-dev-hook.cjs" via `NodeModule.createRequire(import.meta.url)` when `!NodeSea.isSea() && import.meta.url.endsWith("/src/bin.ts")` so unbundled `vp run dev` applies the same Reclaude/Recodex server transforms.',
+    steps: [
+      {
+        anchor: /^(\s*)if \(!NodeSea\.isSea\(\)\) return import\("\.\/binMain\.ts"\);/m,
+        insert: (match, indent) =>
+          `${indent}if (!NodeSea.isSea() && import.meta.url.endsWith("/src/bin.ts")) NodeModule.createRequire(import.meta.url)("../../zh/server-dev-hook.cjs").register(NodeModule); // ${MARK}\n${match}`,
       },
     ],
   },

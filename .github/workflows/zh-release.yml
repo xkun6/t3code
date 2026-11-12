@@ -122,6 +122,10 @@ jobs:
             exit $code
           fi
 
+      - name: 校验覆盖层单测
+        working-directory: src
+        run: node --test zh/localize.test.cjs zh/reclaude.test.cjs
+
       - name: 提取文案
         working-directory: src
         run: node zh/extract.cjs --stats
@@ -163,6 +167,8 @@ jobs:
             !src/zh/.cache
             src/apps/web/vite.config.ts
             src/apps/desktop/vite.config.ts
+            src/apps/server/vite.config.ts
+            src/apps/server/src/bin.ts
             src/apps/mobile/metro.config.js
             src/apps/mobile/modules/t3-native-controls/android/src/main/java/expo/modules/t3nativecontrols/T3WorkspaceNavigationModule.kt
           if-no-files-found: error

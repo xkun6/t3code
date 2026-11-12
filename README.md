@@ -3,7 +3,9 @@
 这个分支只放构建中文版需要的东西,不含 T3 Code 源码:
 
 - `.github/workflows/zh-release.yml`:每小时检查上游 [pingdotgg/t3code](https://github.com/pingdotgg/t3code) 的最新稳定版(`vX.Y.Z` 标签),本仓库还没发布过就自动翻译、构建、发布。
-- `zh/`:构建时的中文化覆盖层。不改上游源码,只在三个构建配置里各插一两行(Web 和桌面端的 Vite 配置、移动端的 Metro 配置),构建时把界面里的英文字符串替换成 `zh/locales/zh-Hans.json` 里的翻译。
+- `zh/`:构建时的中文化与增强覆盖层。不改上游业务源码,只在构建/入口配置里各插一两行(Web、桌面端、服务端的 Vite 配置,服务端开发入口与移动端的 Metro 配置):
+  - 构建时把界面里的英文字符串替换成 `zh/locales/zh-Hans.json` 里的翻译。
+  - 服务端兼容 Reclaude(`rec` / `reclaude`)与 Recodex(`recx` / `recodex`)封装 CLI:在 **设置 → 提供商 → Claude / Codex → 二进制路径** 填入 `rec`(`rec.exe`)或 `recx`(`recx.exe`)即可直接使用,自动透传 `cli` 子命令与前置 `--org <id>` 参数、对齐 `~/.rec` 当前组织绑定的配置/会话目录,并在未登录时快速提示运行 `rec login` / `recx login` 而不挂起后台探测。
 
 ## 一次性设置
 
@@ -53,7 +55,7 @@ node zh/apply.cjs              # 注入构建配置(幂等)
 node zh/extract.cjs --stats    # 列出词典缺的文案 → zh/.cache/missing.json
 DEEPSEEK_API_KEY=... node zh/translate.cjs --limit 100
 T3CODE_LOCALE=zh-Hans vp run build:desktop:bundle
-node --test zh/localize.test.cjs
+node --test zh/localize.test.cjs zh/reclaude.test.cjs
 ```
 
-不设 `T3CODE_LOCALE=zh-Hans` 时,注入的插件什么也不做。
+不设 `T3CODE_LOCALE=zh-Hans` 时,UI 翻译插件什么也不做;设 `T3CODE_RECLAUDE=0` 可关闭 `rec` / `recx` 服务端兼容注入。
