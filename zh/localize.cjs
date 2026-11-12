@@ -382,7 +382,12 @@ function visitModule(code, file, onString) {
       case "JSXText": {
         const value = decodeEntities(jsxTextValue(node.raw));
         const trimmed = value === null ? "" : value.trim();
-        if (trimmed && /[A-Za-z]{2,}/.test(trimmed)) {
+        if (
+          trimmed &&
+          /[A-Za-z]{2,}/.test(trimmed) &&
+          !/^[a-z][a-z0-9+.-]*:\/\/\S+$/i.test(trimmed) &&
+          !/^[./~]\S+$/.test(trimmed)
+        ) {
           const lead = node.raw.length - node.raw.trimStart().length;
           const trail = node.raw.length - node.raw.trimEnd().length;
           onString({

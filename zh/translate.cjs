@@ -91,8 +91,8 @@ async function main() {
 
   console.log(`Translated ${missing.length - rejected.length}, left in English ${rejected.length}.`);
   for (const entry of rejected.slice(0, 20)) console.log(`  untranslated: ${JSON.stringify(entry.key)}`);
-  // More than a fifth failing means the API or prompt is broken, not a few odd strings.
-  if (rejected.length > missing.length / 5) process.exit(1);
+  // More than a fifth failing (and more than a handful) means the API or prompt is broken, not a few odd strings.
+  if (rejected.length > Math.max(5, missing.length / 5)) process.exit(1);
 }
 
 main().catch((error) => {

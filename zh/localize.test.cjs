@@ -127,6 +127,17 @@ test("JSX entities decode before lookup", () => {
   require("./localize.cjs").__setDictionaryForTest(dictionary);
 });
 
+test("JSX text skips standalone URLs and paths while keeping sentence fragments", () => {
+  const { visitModule } = require("./localize.cjs");
+  const keys = [];
+  visitModule(
+    'const a = <><Text>http://127.0.0.1:5173/</Text><Text>/skill:</Text><Text>. Save changes</Text><Text>without https:// prefix</Text></>;',
+    file,
+    ({ key }) => keys.push(key),
+  );
+  assert.deepEqual(keys, [". Save changes", "without https:// prefix"]);
+});
+
 test("plural suffix slots may be dropped, other slots may not", () => {
   const { checkTranslation } = require("./localize.cjs");
   assert.equal(checkTranslation("{0} favorite{1}", "{0} 个收藏"), null);
