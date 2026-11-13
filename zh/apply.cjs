@@ -69,12 +69,12 @@ const EDITS = [
   {
     file: "apps/server/src/bin.ts",
     goal:
-      'Inside `loadCliMain`, before `if (!NodeSea.isSea()) return import("./binMain.ts");`, register "../../zh/server-dev-hook.cjs" via `NodeModule.createRequire(import.meta.url)` when `!NodeSea.isSea() && import.meta.url.endsWith("/src/bin.ts")` so unbundled `vp run dev` applies the same Reclaude/Recodex server transforms.',
+      'Inside `loadCliMain`, before `if (!NodeSea.isSea()) return import("./binMain.ts");`, register "../../../zh/server-dev-hook.cjs" via `NodeModule.createRequire(import.meta.url)` when `!NodeSea.isSea() && import.meta.url.endsWith("/src/bin.ts")` so unbundled `vp run dev` applies the same Reclaude/Recodex server transforms.',
     steps: [
       {
         anchor: /^(\s*)if \(!NodeSea\.isSea\(\)\) return import\("\.\/binMain\.ts"\);/m,
         insert: (match, indent) =>
-          `${indent}if (!NodeSea.isSea() && import.meta.url.endsWith("/src/bin.ts")) NodeModule.createRequire(import.meta.url)("../../zh/server-dev-hook.cjs").register(NodeModule); // ${MARK}\n${match}`,
+          `${indent}if (!NodeSea.isSea() && import.meta.url.endsWith("/src/bin.ts")) NodeModule.createRequire(import.meta.url)("../../../zh/server-dev-hook.cjs").register(NodeModule); // ${MARK}\n${match}`,
       },
     ],
   },
