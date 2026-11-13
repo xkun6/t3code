@@ -278,7 +278,15 @@ jobs:
 
       - name: 生成原生工程
         working-directory: apps/mobile
-        run: ./node_modules/.bin/expo prebuild --clean --platform android
+        # expo-splash-screen 并发生成浅色/深色启动图时共用同一个缓存文件,偶发读到写了一半的图
+        # ("Could not find MIME for Buffer <null>")。失败就清掉图片缓存重试。
+        run: |
+          for attempt in 1 2 3; do
+            ./node_modules/.bin/expo prebuild --clean --platform android && exit 0
+            echo "::warning::生成原生工程第 $attempt 次失败,清掉图片缓存后重试。"
+            rm -rf .expo/web/cache
+          done
+          exit 1
 
       - name: 构建 APK
         working-directory: apps/mobile/android
