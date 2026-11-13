@@ -1,5 +1,6 @@
 // Node module loader hook for unbundled `vp run dev` (`node --watch src/bin.ts`),
-// applying the exact same Reclaude / Recodex AST transforms used by `zhServerPlugin` in `vp pack`.
+// applying the exact same server AST transforms used by `zhServerPlugin` in `vp pack`:
+// Reclaude / Recodex support and conversation translation.
 "use strict";
 
 const path = require("node:path");
@@ -9,12 +10,18 @@ const {
   isReclaudeEnabled,
   transformReclaudeServer,
 } = require("./reclaude-transform.cjs");
+const translation = require("./translation-transform.cjs");
 
 const RUNTIME_URL = pathToFileURL(path.join(__dirname, "reclaude-runtime.mjs")).href;
+const TRANSLATION_RUNTIME_URL = pathToFileURL(path.join(__dirname, "translation-runtime.mjs")).href;
 let registered = false;
 
 function register(nodeModule) {
-  if (registered || !isReclaudeEnabled() || typeof nodeModule?.registerHooks !== "function") {
+  if (
+    registered ||
+    (!isReclaudeEnabled() && !translation.isTranslationEnabled()) ||
+    typeof nodeModule?.registerHooks !== "function"
+  ) {
     return;
   }
   registered = true;
@@ -22,6 +29,9 @@ function register(nodeModule) {
     resolve(specifier, context, nextResolve) {
       if (specifier === RUNTIME_SPECIFIER) {
         return { url: RUNTIME_URL, shortCircuit: true };
+      }
+      if (specifier === translation.RUNTIME_SPECIFIER) {
+        return { url: TRANSLATION_RUNTIME_URL, shortCircuit: true };
       }
       return nextResolve(specifier, context);
     },
@@ -38,7 +48,12 @@ function register(nodeModule) {
             ? loaded.source
             : null;
       if (rawSource === null) return loaded;
-      const nextSource = transformReclaudeServer(rawSource, filePath, { bundle: false });
+      // The two overlays target disjoint files.
+      const reclaudeSource = transformReclaudeServer(rawSource, filePath, { bundle: false });
+      const nextSource =
+        reclaudeSource === rawSource
+          ? (translation.transformTranslationServerWithMap(rawSource, filePath)?.code ?? rawSource)
+          : reclaudeSource;
       return nextSource === rawSource ? loaded : { ...loaded, source: nextSource };
     },
   });

@@ -124,7 +124,7 @@ jobs:
 
       - name: 校验覆盖层单测
         working-directory: src
-        run: node --test zh/localize.test.cjs zh/reclaude.test.cjs
+        run: node --test zh/localize.test.cjs zh/reclaude.test.cjs zh/translation.test.cjs
 
       - name: 提取文案
         working-directory: src

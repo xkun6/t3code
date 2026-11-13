@@ -6,6 +6,7 @@
 - `zh/`:构建时的中文化与增强覆盖层。不改上游业务源码,只在构建/入口配置里各插一两行(Web、桌面端、服务端的 Vite 配置,服务端开发入口与移动端的 Metro 配置):
   - 构建时把界面里的英文字符串替换成 `zh/locales/zh-Hans.json` 里的翻译。
   - 服务端兼容 Reclaude(`rec` / `reclaude`)与 Recodex(`recx` / `recodex`)封装 CLI:在 **设置 → 提供商 → Claude / Codex → 二进制路径** 填入 `rec`(`rec.exe`)或 `recx`(`recx.exe`)即可直接使用,自动透传 `cli` 子命令与前置 `--org <id>` 参数、对齐 `~/.rec` 当前组织绑定的配置/会话目录,并在未登录时快速提示运行 `rec login` / `recx login` 而不挂起后台探测。
+  - 对话翻译:用自己的语言和 Agent 对话,Agent 的上下文里只有 Agent 语言。见下文「对话翻译」。
 
 ## 一次性设置
 
@@ -40,6 +41,20 @@
 - **上游改了构建配置**:注入锚点失效时,流水线会让 DeepSeek 改那个配置文件。改法只能新增带 `t3code-zh-overlay` 标记的行,删改任何原有行都会被拒绝。用了 AI 修复时运行摘要里会有 diff,建议看一眼。
 - **关掉 Git 定时 fetch**:应用内 设置 → 后台活动 → Git fetch 间隔 设为 0。不需要改代码。
 
+## 对话翻译
+
+输入框右下角的「译」按钮里可以开关当前会话的翻译,并配置翻译接口(设置保存在该会话所在的服务端,桌面端和浏览器共用):
+
+- **接口**:自己提供一个模型接口,支持 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 三种协议。例如 DeepSeek:协议选 Chat Completions,地址 `https://api.deepseek.com/v1`,模型 `deepseek-chat`。API Key 只保存在服务端的 `<数据目录>/zh-translation/config.json`(明文),不会回传给界面。
+- **回复**:Agent 回复完成并滚动到可见区域后翻译成「我的语言」显示,下方可切换原文。复制按钮复制的仍是原文。
+- **计划卡片**:和回复一样显示译文并可切换原文。卡片上的复制、下载、保存到工作区导出的是当前显示的那一版,要原文就先切回原文。
+- **提问卡片**:题头、题目、选项和说明显示译文,鼠标悬停看原文。选中的选项仍按原文交给 Agent;你自己输入的回答,以及审批、计划的反馈意见,会先译成「Agent 语言」。
+- **发送**:开启「翻译我发送的消息」时,消息在交给 Agent 之前先译成「Agent 语言」;时间线里保留你写的原文,消息下方的「查看发送的译文」能看到 Agent 实际收到的内容。斜杠命令只翻译参数。翻译失败时按原文发送,不会丢消息。
+- **语言检测**:服务端按文字的书写系统判断,不需要翻译的内容不会发给接口:正文已经大半是目标语言(比如 Agent 直接用中文回复)、完全不含源语言的文字(比如你直接用英文提问),或者只有代码和路径。中文、日文、韩文、俄文、阿拉伯文、泰文、希伯来文、希腊文、印地文可以这样识别;英语、法语这类同用拉丁字母的语言彼此分不出来,照常交给接口。设置里的「测试」不受检测影响。
+- **范围**:只翻译你在界面里亲手发的消息和插话;定时任务、Agent 之间的消息、访客消息不翻译。思考过程暂不翻译,已回答的提问在时间线里显示原文。手机端目前没有界面:在已开启翻译的会话里从手机发的消息和回答同样会被翻译,但回复显示原文。
+- 译文缓存在 `<数据目录>/zh-translation/cache.jsonl`,重开会话不重复计费。
+- 构建时设 `T3CODE_TRANSLATION=0` 可以去掉这个功能。
+
 ## 安全
 
 - 只有 `schedule` 和 `workflow_dispatch` 能触发,别人的 PR 拿不到 secrets。
@@ -55,7 +70,7 @@ node zh/apply.cjs              # 注入构建配置(幂等)
 node zh/extract.cjs --stats    # 列出词典缺的文案 → zh/.cache/missing.json
 DEEPSEEK_API_KEY=... node zh/translate.cjs --limit 100
 T3CODE_LOCALE=zh-Hans vp run build:desktop:bundle
-node --test zh/localize.test.cjs zh/reclaude.test.cjs
+node --test zh/localize.test.cjs zh/reclaude.test.cjs zh/translation.test.cjs
 ```
 
-不设 `T3CODE_LOCALE=zh-Hans` 时,UI 翻译插件什么也不做;设 `T3CODE_RECLAUDE=0` 可关闭 `rec` / `recx` 服务端兼容注入。
+不设 `T3CODE_LOCALE=zh-Hans` 时,UI 翻译插件什么也不做;设 `T3CODE_RECLAUDE=0` 可关闭 `rec` / `recx` 服务端兼容注入,设 `T3CODE_TRANSLATION=0` 可关闭对话翻译注入。
