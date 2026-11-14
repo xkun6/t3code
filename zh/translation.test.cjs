@@ -354,6 +354,7 @@ upstreamTest("every upstream target transforms with zero missing anchors and a v
   const groups = [
     [transform.SERVER_TARGET_FILES, transform.transformTranslationServerWithMap, "__zhTranslation."],
     [transform.WEB_TARGET_FILES, transform.transformTranslationWebWithMap, "__zhT."],
+    [transform.MOBILE_TARGET_FILES, transform.transformTranslationMobileWithMap, "__zhT."],
   ];
   for (const [files, apply, binding] of groups) {
     for (const rel of files) {
@@ -375,8 +376,8 @@ upstreamTest("every upstream target transforms with zero missing anchors and a v
     { root: upstream, silent: true },
   ).code;
   // Only the text handed to the provider is translated; the slash-command probe keeps the original.
-  assert.equal(started.split("__zhTranslation.translateUserMessage(message").length - 1, 1);
-  assert.equal(started.split("text: message.text,").length - 1, 1);
+  assert.equal(started.match(/__zhTranslation\.translateUserMessage\((?:message|providerMessage),/g)?.length, 1);
+  assert.equal(started.match(/text: (?:message|providerMessage)\.text,/g)?.length, 1);
 
   // The answer hook reads the request's questions through names the transform cannot check itself.
   const read = (rel) => fs.readFileSync(path.join(upstream, rel), "utf8");
@@ -394,6 +395,15 @@ upstreamTest("every upstream target transforms with zero missing anchors and a v
   assert.equal(question.split("<__zhT.QuestionText ").length - 1, 5);
   // Answers are still built from the original option, never from what is displayed.
   assert.ok(question.includes("const optionValue = option.value ?? option.label;"));
+
+  const mobileCard = "apps/mobile/src/features/threads/PendingUserInputCard.tsx";
+  const mobileQuestion = transform.transformTranslationMobileWithMap(read(mobileCard), path.join(upstream, mobileCard), {
+    root: upstream,
+    silent: true,
+  }).code;
+  assert.equal(mobileQuestion.split("<__zhT.QuestionText ").length - 1, 3);
+  assert.equal(mobileQuestion.split("__zhT.useAgentText(props.markdown").length - 1, 1);
+  assert.ok(mobileQuestion.includes("const optionValue = option.value ?? option.label.trim();"));
 });
 
 upstreamTest("T3CODE_TRANSLATION=0 leaves every target untouched", (t) => {
@@ -403,11 +413,70 @@ upstreamTest("T3CODE_TRANSLATION=0 leaves every target untouched", (t) => {
   assert.equal(transform.transformTranslationServerWithMap(fs.readFileSync(file, "utf8"), file, { root: upstream }), null);
 });
 
-test("the RPC method name agrees across the transform, the runtime, and the web module", async () => {
+test("the RPC method name agrees across the transform, the runtime, and the client modules", async () => {
   const { RPC_METHOD } = await runtimeModule;
-  const web = fs.readFileSync(path.join(__dirname, "web", "translation.tsx"), "utf8");
   assert.equal(RPC_METHOD, transform.RPC_METHOD);
-  assert.ok(web.includes(`const RPC_METHOD = ${JSON.stringify(transform.RPC_METHOD)};`));
+  for (const client of ["web", "mobile"]) {
+    const source = fs.readFileSync(path.join(__dirname, client, "translation.tsx"), "utf8");
+    assert.ok(source.includes(`const RPC_METHOD = ${JSON.stringify(transform.RPC_METHOD)};`), client);
+  }
+});
+
+test("Metro serves the mobile module and resolves its imports from inside the app", (t) => {
+  const { withZhLocale, MOBILE_MODULE_PATH } = require("./metro.cjs");
+  const previousTransformer = process.env.T3CODE_ZH_UPSTREAM_TRANSFORMER;
+  t.after(() => {
+    if (previousTransformer === undefined) delete process.env.T3CODE_ZH_UPSTREAM_TRANSFORMER;
+    else process.env.T3CODE_ZH_UPSTREAM_TRANSFORMER = previousTransformer;
+  });
+  const projectRoot = path.join(os.tmpdir(), "app");
+  const seen = [];
+  const config = withZhLocale({
+    projectRoot,
+    transformer: { babelTransformerPath: "/upstream-transformer.js" },
+    resolver: { resolveRequest: (context, moduleName) => (seen.push([context.originModulePath, moduleName]), { type: "empty" }) },
+  });
+  const resolve = (originModulePath, moduleName) => config.resolver.resolveRequest({ originModulePath }, moduleName, "ios");
+
+  assert.deepEqual(resolve("/x.tsx", transform.MOBILE_SPECIFIER), { type: "sourceFile", filePath: MOBILE_MODULE_PATH });
+  resolve(MOBILE_MODULE_PATH, "../connection/runtime");
+  resolve("/elsewhere.tsx", "react-native");
+  assert.deepEqual(seen, [
+    [path.join(projectRoot, "src", "__zh__", "translation.tsx"), "../connection/runtime"],
+    ["/elsewhere.tsx", "react-native"],
+  ]);
+});
+
+upstreamTest("the mobile module only uses classes and imports that exist upstream", () => {
+  const mobile = fs.readFileSync(path.join(__dirname, "mobile", "translation.tsx"), "utf8");
+  const mobileRoot = path.join(upstream, "apps/mobile/src");
+  const sources = [];
+  for (const entry of fs.readdirSync(mobileRoot, { recursive: true, withFileTypes: true })) {
+    if (entry.isFile() && /\.tsx?$/.test(entry.name) && !/\.test\./.test(entry.name)) {
+      sources.push(fs.readFileSync(path.join(entry.parentPath, entry.name), "utf8"));
+    }
+  }
+  const haystack = sources.join("\n");
+  // Uniwind generates classes it finds under apps/mobile only.
+  const classNames = new Set();
+  for (const match of mobile.matchAll(/"([a-z][\w ./:-]*)"/g)) {
+    if (!/\btext-/.test(match[1])) continue;
+    for (const name of match[1].split(/\s+/)) classNames.add(name);
+  }
+  assert.ok(classNames.has("text-foreground-muted"), "class extraction still finds the module's classes");
+  const classBoundary = (name) => new RegExp(`(?<![\\w:/-])${name.replace(/[.\\/]/g, "\\$&")}(?![\\w:/.-])`);
+  assert.deepEqual([...classNames].filter((name) => !classBoundary(name).test(haystack)), []);
+
+  // Metro resolves the module's relative imports from apps/mobile/src/__zh__/.
+  for (const match of mobile.matchAll(/import \{([^}]+)\} from "(\.\.\/[^"]+)";/g)) {
+    const target = path.join(mobileRoot, "__zh__", match[2]);
+    const file = [".tsx", ".ts"].map((extension) => target + extension).find((candidate) => fs.existsSync(candidate));
+    assert.ok(file, `missing upstream module ${match[2]}`);
+    const source = fs.readFileSync(file, "utf8");
+    for (const name of match[1].split(",").map((part) => part.trim().split(/\s+as\s+/)[0]).filter(Boolean)) {
+      assert.match(source, new RegExp(`export (?:const|function) ${name}\\b`), `${match[2]} no longer exports ${name}`);
+    }
+  }
 });
 
 upstreamTest("the web module only uses classes, imports, and scopes that exist upstream", () => {

@@ -3,7 +3,8 @@
 // - server: one RPC (contract, authorization scope, handler) and translation of the user's own
 //   text right before it reaches a provider adapter (turn start, steering, and request answers);
 // - web: translated assistant replies, plan cards, and pending questions, the composer toggle, and
-//   the "sent translation" disclosure.
+//   the "sent translation" disclosure;
+// - mobile: the same translated replies, plans, and questions, and a per-thread composer switch.
 "use strict";
 
 const path = require("node:path");
@@ -12,7 +13,8 @@ const MagicString = require("magic-string").default;
 
 const RUNTIME_SPECIFIER = "t3code:zh-translation-runtime";
 const WEB_SPECIFIER = "t3code:zh-translation-web";
-// Must match RPC_METHOD in translation-runtime.mjs and web/translation.tsx.
+const MOBILE_SPECIFIER = "t3code:zh-translation-mobile";
+// Must match RPC_METHOD in translation-runtime.mjs, web/translation.tsx, and mobile/translation.tsx.
 const RPC_METHOD = "server.zhTranslation";
 const RPC_CONST = "WsServerZhTranslationRpc";
 
@@ -92,7 +94,10 @@ function jsxAttributeSource(element, name, code) {
   return expression ? code.slice(expression.start, expression.end).replace(/\s+/g, "") : "";
 }
 
-/** The `text: message.text` property of a `projectComposerContextForProvider({ ... })` call. */
+/**
+ * The `text: message.text` property of a `projectComposerContextForProvider({ ... })` call. Newer
+ * upstream names it `providerMessage`, since a resumed run may send an earlier message.
+ */
 function composerContextTextProperty(call, code) {
   if (call?.type !== "CallExpression" || calleeName(call.callee, code) !== "projectComposerContextForProvider") {
     return null;
@@ -103,7 +108,7 @@ function composerContextTextProperty(call, code) {
     (candidate) =>
       candidate.key?.type === "Identifier" &&
       candidate.key.name === "text" &&
-      code.slice(candidate.value.start, candidate.value.end) === "message.text",
+      /^(?:message|providerMessage)\.text$/.test(code.slice(candidate.value.start, candidate.value.end)),
   );
   return property ?? null;
 }
@@ -185,11 +190,12 @@ const SERVER_TRANSFORMERS = {
       return 0;
     }
     const value = composerContextTextProperty(userText[0].node.init, code).value;
+    const messageName = code.slice(value.object.start, value.object.end);
     // A queued run can start after a restart, before any client connects, so this hook also names the state directory.
     ms.overwrite(
       value.start,
       value.end,
-      '(yield* Effect.flatMap(Effect.serviceOption(ServerConfig.ServerConfig), (__zhConfig) => Effect.promise(() => __zhTranslation.translateUserMessage(message, { stateDir: __zhConfig._tag === "Some" ? __zhConfig.value.stateDir : undefined }))))',
+      `(yield* Effect.flatMap(Effect.serviceOption(ServerConfig.ServerConfig), (__zhConfig) => Effect.promise(() => __zhTranslation.translateUserMessage(${messageName}, { stateDir: __zhConfig._tag === "Some" ? __zhConfig.value.stateDir : undefined }))))`,
     );
     return 1;
   },
@@ -424,6 +430,147 @@ const WEB_TRANSFORMERS = {
   },
 };
 
+// The mobile list is virtualized, so a mounted row is a visible one; translating on mount is enough.
+const MOBILE_TRANSFORMERS = {
+  "packages/contracts/src/rpc.ts": transformContracts,
+
+  "apps/mobile/src/features/threads/ThreadFeed.tsx"(code, ast, ms, warn) {
+    const render = find(ast, (n) => n.type === "FunctionDeclaration" && n.id?.name === "renderFeedEntry")[0];
+    const source = render ? code.slice(render.node.start, render.node.end) : "";
+    const markdown = render
+      ? find(
+          render.node,
+          (n) =>
+            n.type === "JSXElement" &&
+            jsxName(n) === "AssistantMarkdownContent" &&
+            jsxAttributeSource(n, "markdown", code) === "renderedText",
+        )
+      : [];
+    const workLogs = render ? find(render.node, (n) => n.type === "JSXElement" && jsxName(n) === "ThreadWorkLog") : [];
+    if (
+      markdown.length !== 1 ||
+      workLogs.length !== 1 ||
+      !/\|\s*"threadId"/.test(source) ||
+      !/\bmessage\.streaming\b/.test(source)
+    ) {
+      warn("renderFeedEntry");
+      return 0;
+    }
+    wrapMarkdownElement(
+      markdown[0].node,
+      "markdown",
+      code,
+      ms,
+      "<__zhT.AssistantTranslation text={renderedText} streaming={Boolean(message.streaming)} environmentId={props.environmentId} threadId={props.threadId}>",
+      "</__zhT.AssistantTranslation>",
+    );
+    // The work log knows its environment but not the thread it is shown in.
+    ms.appendLeft(workLogs[0].node.openingElement.name.end, " __zhThreadId={props.threadId}");
+    return 2;
+  },
+
+  // The card receives the translation as its plan, so its title and copy follow what is shown.
+  "apps/mobile/src/features/threads/thread-work-log.tsx"(code, ast, ms, warn) {
+    const log = find(ast, (n) => n.type === "FunctionDeclaration" && n.id?.name === "ThreadWorkLog")[0];
+    const cards = log
+      ? find(
+          log.node,
+          (n) =>
+            n.type === "JSXElement" &&
+            jsxName(n) === "ProposedPlanCard" &&
+            jsxAttributeSource(n, "markdown", code) === "plan.markdown",
+        )
+      : [];
+    if (cards.length !== 1 || !/\bprops\.environmentId\b/.test(code.slice(log.node.start, log.node.end))) {
+      warn("ThreadWorkLog");
+      return 0;
+    }
+    wrapMarkdownElement(
+      cards[0].node,
+      "markdown",
+      code,
+      ms,
+      "<__zhT.AssistantTranslation text={plan.markdown} streaming={false} environmentId={props.environmentId} threadId={props.__zhThreadId}>",
+      "</__zhT.AssistantTranslation>",
+    );
+    return 1;
+  },
+
+  // The pending question above the composer. Answers still carry the original option values.
+  "apps/mobile/src/features/threads/PendingUserInputCard.tsx"(code, ast, ms, warn) {
+    const card = find(ast, (n) => n.type === "FunctionDeclaration" && n.id?.name === "PendingUserInputCard")[0];
+    const inline = new Set(["question.header", "option.label", "description"]);
+    const texts = card
+      ? find(
+          card.node,
+          (n, ancestors) =>
+            n.type === "JSXExpressionContainer" &&
+            ancestors.at(-1)?.type === "JSXElement" &&
+            jsxName(ancestors.at(-1)) === "Text" &&
+            inline.has(code.slice(n.expression.start, n.expression.end)),
+        )
+      : [];
+    const questionText = find(ast, (n) => n.type === "FunctionDeclaration" && n.id?.name === "QuestionText")[0];
+    const markdown = questionText
+      ? find(
+          questionText.node,
+          (n) =>
+            n.type === "CallExpression" &&
+            calleeName(n.callee, code) === "useLiveThreadLinkLabels" &&
+            code.slice(n.arguments[0]?.start, n.arguments[0]?.end) === "props.markdown",
+        )
+      : [];
+    const questionSource = questionText ? code.slice(questionText.node.start, questionText.node.end) : "";
+    if (
+      texts.length !== inline.size ||
+      new Set(texts.map(({ node }) => code.slice(node.expression.start, node.expression.end))).size !== inline.size ||
+      markdown.length !== 1 ||
+      !/readonly threadId: ThreadId;/.test(questionSource) ||
+      !/\bprops\.threadId\b/.test(code.slice(card.node.start, card.node.end))
+    ) {
+      warn("PendingUserInputCard");
+      return 0;
+    }
+    const props = "environmentId={props.environmentId} threadId={props.threadId}";
+    for (const { node } of texts) {
+      const expression = code.slice(node.expression.start, node.expression.end);
+      ms.overwrite(node.start, node.end, `<__zhT.QuestionText text={${expression}} ${props} />`);
+    }
+    const argument = markdown[0].node.arguments[0];
+    ms.overwrite(
+      argument.start,
+      argument.end,
+      "__zhT.useAgentText(props.markdown, props.environmentId, props.threadId)",
+    );
+    return texts.length + 1;
+  },
+
+  "apps/mobile/src/features/threads/ThreadComposer.tsx"(code, ast, ms, warn) {
+    const slots = find(
+      ast,
+      (n, ancestors) =>
+        n.type === "JSXExpressionContainer" &&
+        n.expression?.type === "Identifier" &&
+        n.expression.name === "modelControl" &&
+        ancestors.at(-1)?.type === "JSXElement",
+    );
+    if (
+      slots.length !== 1 ||
+      !/\bconst usesLargeControls\b/.test(code) ||
+      !/\bprops\.selectedThread\.id\b/.test(code) ||
+      !/\breadonly environmentId: EnvironmentId;/.test(code)
+    ) {
+      warn("modelControl");
+      return 0;
+    }
+    ms.appendRight(
+      slots[0].node.end,
+      '<__zhT.ComposerTranslationToggle environmentId={props.environmentId} threadId={props.selectedThread.id} size={usesLargeControls ? "large" : "regular"} />',
+    );
+    return 1;
+  },
+};
+
 function relativePath(file, targets, root) {
   const normalized = String(file ?? "").split("?")[0].split("\\").join("/");
   const base = (root || process.env.T3CODE_ZH_ROOT || path.resolve(__dirname, "..")).split("\\").join("/");
@@ -465,13 +612,20 @@ function transformTranslationWebWithMap(code, file, options = {}) {
   return transformWithMap(code, file, WEB_TRANSFORMERS, WEB_SPECIFIER, "__zhT", options);
 }
 
+function transformTranslationMobileWithMap(code, file, options = {}) {
+  return transformWithMap(code, file, MOBILE_TRANSFORMERS, MOBILE_SPECIFIER, "__zhT", options);
+}
+
 module.exports = {
   RPC_METHOD,
   RUNTIME_SPECIFIER,
   WEB_SPECIFIER,
+  MOBILE_SPECIFIER,
   SERVER_TARGET_FILES: Object.keys(SERVER_TRANSFORMERS),
   WEB_TARGET_FILES: Object.keys(WEB_TRANSFORMERS),
+  MOBILE_TARGET_FILES: Object.keys(MOBILE_TRANSFORMERS),
   isTranslationEnabled,
   transformTranslationServerWithMap,
   transformTranslationWebWithMap,
+  transformTranslationMobileWithMap,
 };
