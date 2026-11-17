@@ -1,0 +1,395 @@
+name: 中文版构建
+
+# zh 分支 = 上游 pingdotgg/t3code 的稳定版 + 中文化提交。每小时检查上游最新稳定版标签(vX.Y.Z):
+# 比 zh/UPSTREAM 记录的新 → 合并进 zh(冲突交给 AI 按块解决)→ DeepSeek 翻译新增文案 → 推回 zh
+# → 构建 Windows 安装包和 Android APK → 发布到本仓库的 Releases(桌面端自动更新读的就是这里)。
+# dsh-bot 的 t3code 插件轮询这个 workflow 的运行结果发通知,也可以用 workflow_dispatch 立即触发。
+#
+# 安全:只有 schedule / workflow_dispatch 触发。DeepSeek 密钥只交给 prepare 任务里本仓库自己的脚本
+# (merge-upstream / repair / translate),那个任务只做 git 合并和解析源码,不安装、不执行上游代码;
+# 构建任务拿不到密钥。
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要合并构建的上游标签(留空 = 最新稳定版)"
+        required: false
+        default: ""
+      rebuild:
+        description: "Release 已存在时也重新构建并覆盖文件"
+        type: boolean
+        default: false
+
+concurrency:
+  group: zh-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM_REPO: https://github.com/pingdotgg/t3code.git
+  BRANCH: zh
+
+jobs:
+  check:
+    name: 检查上游版本
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      merge: ${{ steps.resolve.outputs.merge }}
+      build: ${{ steps.resolve.outputs.build }}
+    steps:
+      - name: 读取已合并的上游版本
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.BRANCH }}
+          sparse-checkout: zh/UPSTREAM
+          sparse-checkout-cone-mode: false
+
+      - id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REBUILD: ${{ inputs.rebuild }}
+        run: |
+          set -euo pipefail
+          tag="${INPUT_TAG:-}"
+          if [[ -z "$tag" ]]; then
+            tag="$(git ls-remote --tags --refs "$UPSTREAM_REPO" 'v*' | sed 's|.*refs/tags/||' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
+          fi
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "无效的标签: $tag" >&2; exit 1; }
+          merged="$(tr -d '[:space:]' < zh/UPSTREAM)"
+          if [[ "$tag" == "$merged" ]]; then
+            merge=false
+          elif [[ "$(printf '%s\n%s\n' "$merged" "$tag" | sort -V | tail -n 1)" == "$tag" ]]; then
+            merge=true
+          else
+            echo "::error::zh 已经合并到 $merged,不能再构建更旧的 $tag。" >&2
+            exit 1
+          fi
+          build=true
+          # A draft left by a failed publish does not count as released.
+          draft="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft 2>/dev/null || echo missing)"
+          if [[ "$merge" == "false" && "$draft" == "false" && "$REBUILD" != "true" ]]; then
+            build=false
+            echo "$tag 已发布过,跳过。"
+          fi
+          # 定时任务不在同一个提交上反复重试失败的构建:推新提交或手动运行才会再试。
+          if [[ "$build" == "true" && "$GITHUB_EVENT_NAME" == "schedule" ]]; then
+            failed="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow zh-release.yml --commit "$GITHUB_SHA" \
+              --status failure --limit 1 --json databaseId -q '.[0].databaseId // empty')"
+            if [[ -n "$failed" ]]; then
+              build=false
+              echo "::warning::这个提交上次构建失败(run $failed),推新提交到 $BRANCH 或手动运行才会重试。"
+            fi
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "merge=$merge" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+
+  prepare:
+    # dsh-bot 从任务名里读版本号。
+    name: 合并上游 ${{ needs.check.outputs.tag }} 并翻译
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.push.outputs.sha }}
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+      DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      DEEPSEEK_BASE_URL: ${{ secrets.DEEPSEEK_BASE_URL }}
+      DEEPSEEK_MODEL: ${{ secrets.DEEPSEEK_MODEL }}
+      DEEPSEEK_PROTOCOL: ${{ secrets.DEEPSEEK_PROTOCOL }}
+    steps:
+      - name: 检出 zh 分支
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ env.BRANCH }}
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: 配置 git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: 安装覆盖层依赖
+        working-directory: zh
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - id: merge
+        name: 合并上游
+        if: needs.check.outputs.merge == 'true'
+        run: |
+          set -euo pipefail
+          git fetch -q --no-tags --filter=blob:none "$UPSTREAM_REPO" "refs/tags/$TAG:refs/tags/$TAG"
+          node zh/merge-upstream.cjs "$TAG"
+
+      # 只是个标记步骤:dsh-bot 看到它执行了就会在通知里提醒检查合并提交。
+      - name: AI 解决了合并冲突
+        if: steps.merge.outputs.ai_resolved != '' && steps.merge.outputs.ai_resolved != '0'
+        run: echo "::warning::AI 解决了 ${{ steps.merge.outputs.ai_resolved }} 个文件的合并冲突,请检查合并提交。"
+
+      # 合并后挂入点仍应都在;丢了的由 apply.cjs 补回,锚点也没了才交给 AI。
+      - id: apply
+        name: 校验构建配置挂入点
+        run: |
+          set -uo pipefail
+          node zh/apply.cjs
+          code=$?
+          if [[ $code -eq 2 ]]; then
+            node zh/repair.cjs || exit 1
+            node zh/apply.cjs || exit 1
+            echo "repaired=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "## AI 修复了构建配置挂入点"
+              echo '```diff'
+              git diff
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [[ $code -ne 0 ]]; then
+            exit $code
+          fi
+
+      - name: AI 修复了构建配置
+        if: steps.apply.outputs.repaired == 'true'
+        run: echo "::warning::上游改了构建配置,挂入点由 AI 修复,请检查提交。"
+
+      - id: tests
+        name: 校验覆盖层单测
+        run: node --test zh/localize.test.cjs zh/reclaude.test.cjs zh/translation.test.cjs zh/merge-upstream.test.cjs
+
+      - name: 提取文案
+        run: node zh/extract.cjs --stats
+
+      - id: translate
+        name: 翻译新增文案
+        run: node zh/translate.cjs
+
+      # 翻译失败也先把合并和已翻译的部分推上去,下次只补剩下的。
+      - id: push
+        name: 提交并推送
+        if: always() && steps.tests.outcome == 'success'
+        run: |
+          set -euo pipefail
+          git add -A -- apps zh/locales
+          if ! git diff --cached --quiet; then
+            git commit -q -m "chore(zh): 翻译 $TAG 新增文案,校验挂入点"
+          fi
+          git push -q origin "HEAD:$BRANCH"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  windows:
+    name: 构建 Windows x64
+    needs: [check, prepare]
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      T3CODE_LOCALE: zh-Hans
+      # 桌面端自动更新读本仓库的 Releases。
+      T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
+    steps:
+      - &checkout
+        name: 检出 zh 分支
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      # 官方构建内置的公开 T3 Connect 配置(不是密钥),见上游 .env.example。
+      - &env-file
+        name: 准备公开配置
+        run: cp .env.example .env
+
+      - name: 安装依赖
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/web... --filter=@t3tools/scripts...
+
+      - &install-overlay
+        name: 安装覆盖层依赖
+        working-directory: zh
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: 对齐版本号
+        run: node scripts/update-release-package-versions.ts "$VERSION"
+
+      - name: 构建 JS
+        run: vp run build:desktop:bundle
+
+      # 上游配置把覆盖层插件顶掉时构建照样成功,这里确认挂入点真的进了产物。
+      - name: 校验覆盖层已打包
+        run: |
+          set -uo pipefail
+          check() { grep -lq "$2" $1 || { echo "::error::$3"; failed=1; }; }
+          failed=0
+          check 'apps/server/dist/*.mjs' 'isReclaudeClaude' "服务端产物缺少 Reclaude 挂入点"
+          check 'apps/server/dist/*.mjs' 'server.zhTranslation' "服务端产物缺少对话翻译 RPC"
+          check 'apps/web/dist/assets/*.js' 'server.zhTranslation' "网页产物缺少对话翻译界面"
+          check 'apps/web/dist/assets/*.js' '设置' "网页产物没有汉化"
+          exit $failed
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      - name: 安装 cargo-xwin
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        with:
+          tool: cargo-xwin@0.23.1
+
+      - name: 构建资源监视器
+        run: cargo xwin build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target x86_64-pc-windows-msvc
+
+      # 未签名,也不带 WSL 后端(那需要另外构建 Linux CLI 包)。
+      - name: 打包安装程序
+        env:
+          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "true"
+        run: vp run dist:desktop:artifact --platform win --target nsis --arch x64 --build-version "$VERSION" --skip-build --verbose
+
+      - name: 上传安装程序
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: windows
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
+          if-no-files-found: error
+          retention-days: 3
+
+  android:
+    name: 构建 Android APK
+    needs: [check, prepare]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      T3CODE_LOCALE: zh-Hans
+      APP_VARIANT: production
+      # 关掉官方 EAS 热更新,否则官方 OTA 会把中文包替换回英文。
+      T3CODE_MOBILE_UPDATES_ENABLED: "0"
+      EXPO_NO_GIT_STATUS: "1"
+    steps:
+      - name: 腾出磁盘空间
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+
+      - *checkout
+      - *env-file
+
+      - name: 安装依赖
+        uses: ./.github/actions/setup-ci-deps
+
+      - *install-overlay
+
+      - name: 生成原生工程
+        working-directory: apps/mobile
+        # expo-splash-screen 并发生成浅色/深色启动图时共用同一个缓存文件,偶发读到写了一半的图
+        # ("Could not find MIME for Buffer <null>")。失败就清掉图片缓存重试。
+        run: |
+          for attempt in 1 2 3; do
+            ./node_modules/.bin/expo prebuild --clean --platform android && exit 0
+            echo "::warning::生成原生工程第 $attempt 次失败,清掉图片缓存后重试。"
+            rm -rf .expo/web/cache
+          done
+          exit 1
+
+      - name: 构建 APK
+        working-directory: apps/mobile/android
+        run: |
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          ./gradlew :app:assembleRelease --no-daemon \
+            -PreactNativeArchitectures=arm64-v8a \
+            -x lintVitalAnalyzeRelease -x lintVitalRelease
+
+      # 没配签名密钥时保留 prebuild 默认的调试签名。
+      - name: 签名
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          apk="apps/mobile/android/app/build/outputs/apk/release/app-release.apk"
+          out="t3code-zh-$VERSION-android-arm64.apk"
+          if [[ -n "${ANDROID_KEYSTORE_BASE64:-}" ]]; then
+            build_tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)"
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            export ANDROID_KEY_PASSWORD="${ANDROID_KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}"
+            "$build_tools/apksigner" sign \
+              --ks "$RUNNER_TEMP/release.keystore" \
+              --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+              --ks-key-alias "$ANDROID_KEY_ALIAS" \
+              --key-pass env:ANDROID_KEY_PASSWORD \
+              --out "$out" "$apk"
+            rm -f "$RUNNER_TEMP/release.keystore"
+            echo "已用自己的密钥签名。"
+          else
+            cp "$apk" "$out"
+            echo "::warning::没有配置 ANDROID_KEYSTORE_BASE64,APK 是调试签名。"
+          fi
+
+      - name: 上传 APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: android
+          path: t3code-zh-*.apk
+          if-no-files-found: error
+          retention-days: 3
+
+  release:
+    name: 发布
+    needs: [check, prepare, windows, android]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.check.outputs.tag }}
+      SHA: ${{ needs.prepare.outputs.sha }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: 下载构建产物
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: "{windows,android}"
+          path: dist
+          merge-multiple: true
+
+      - name: 发布 Release
+        run: |
+          set -euo pipefail
+          ls -l dist
+          files=(dist/*.exe dist/*.blockmap dist/latest.yml dist/*.apk)
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          else
+            gh release create "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" \
+              --target "$SHA" --latest \
+              --title "T3 Code $TAG 中文版" \
+              --notes "基于上游 [$TAG](https://github.com/pingdotgg/t3code/releases/tag/$TAG) 合并构建(zh 分支 ${SHA:0:10}),界面文案由 DeepSeek 翻译。Windows 安装包未签名,不含 WSL 后端。"
+          fi
