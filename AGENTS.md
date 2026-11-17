@@ -1,5 +1,7 @@
 # T3 Code
 
+> **这是 zh fork(中文版)。改任何文件之前先读 [zh/AGENTS.md](zh/AGENTS.md):改上游文件的标记规则、自动合并、流水线和 bot 的接口。** <!-- t3code-zh-overlay -->
+
 T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provider CLIs and agents (Codex, Claude Code, Cursor, Grok, OpenCode, Antigravity, Kiro, Pi, Muse Code, fx) and serves web, desktop, and mobile clients.
 
 You can think of T3 Code as an open source "bring-your-own-subscription" alternative to apps like Claude Desktop, Codex App, Cursor Glass and Conductor.
