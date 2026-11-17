@@ -220,6 +220,18 @@ jobs:
       - name: 构建 JS
         run: vp run build:desktop:bundle
 
+      # 上游配置把覆盖层插件顶掉时构建照样成功,这里确认挂入点真的进了产物。
+      - name: 校验覆盖层已打包
+        run: |
+          set -uo pipefail
+          check() { grep -lq "$2" $1 || { echo "::error::$3"; failed=1; }; }
+          failed=0
+          check 'apps/server/dist/*.mjs' 'isReclaudeClaude' "服务端产物缺少 Reclaude 挂入点"
+          check 'apps/server/dist/*.mjs' 'server.zhTranslation' "服务端产物缺少对话翻译 RPC"
+          check 'apps/web/dist/assets/*.js' 'server.zhTranslation' "网页产物缺少对话翻译界面"
+          check 'apps/web/dist/assets/*.js' '设置' "网页产物没有汉化"
+          exit $failed
+
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:

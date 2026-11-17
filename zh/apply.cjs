@@ -54,15 +54,19 @@ const EDITS = [
   {
     file: "apps/server/vite.config.ts",
     goal:
-      'Load `{ zhServerPlugin }` from "../../zh/vite-plugin.cjs" at runtime with `createRequire(import.meta.url)` from "node:module" (not a static import, which Vite would inline into its config bundle) and add `plugins: [zhServerPlugin()],` to the `pack` object in `defineConfig`.',
+      'Load `{ zhServerPlugin }` from "../../zh/vite-plugin.cjs" at runtime with `createRequire(import.meta.url)` from "node:module" (not a static import, which Vite would inline into its config bundle) and add `zhServerPlugin()` to the `plugins` array of the `pack` object in `defineConfig`, creating that array only if `pack` has none (a second `plugins` key would override the first).',
     steps: [
       {
         anchor: /^import \{ defineConfig[^\n]*\n/m,
         insert: (match) => `${match}${SERVER_VITE_IMPORT}`,
       },
       {
-        anchor: /^(\s*)pack:\s*\{\n/m,
-        insert: (match, indent) => `${match}${indent}  plugins: [zhServerPlugin()], // ${MARK}\n`,
+        // Upstream may already give `pack` a plugins array; a second key would silently replace ours.
+        anchor: /^(\s*)pack:\s*\{\n(?:(\s*)plugins:\s*\[\n)?/m,
+        insert: (match, indent, pluginsIndent) =>
+          pluginsIndent === undefined
+            ? `${match}${indent}  plugins: [zhServerPlugin()], // ${MARK}\n`
+            : `${match}${pluginsIndent}  zhServerPlugin(), // ${MARK}\n`,
       },
     ],
   },
