@@ -1,0 +1,9 @@
+{
+  "name": "t3code-zh-overlay",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "magic-string": "0.30.21",
+    "oxc-parser": "0.148.0"
+  }
+}
