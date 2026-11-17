@@ -118,3 +118,5 @@ module.exports = Promise.all([generateMobileThirdPartyLicenses(), prepareStreamS
       polyfills: { rem: 14 },
     }),
 );
+const { withZhLocale } = require("../../zh/metro.cjs"); // t3code-zh-overlay
+module.exports = Promise.resolve(module.exports).then(withZhLocale); // t3code-zh-overlay

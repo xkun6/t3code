@@ -2,6 +2,8 @@ import "vite-plus/test/config";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- tsdown needs the asset path when it reads this config.
 import * as NodePath from "node:path";
 import { defineConfig, mergeConfig } from "vite-plus";
+import * as zhModule from "node:module"; // t3code-zh-overlay
+const { zhServerPlugin } = zhModule.createRequire(import.meta.url)("../../zh/vite-plugin.cjs"); // t3code-zh-overlay
 
 import baseConfig from "../../vite.config.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
@@ -93,6 +95,7 @@ export default mergeConfig(
     },
     pack: {
       plugins: [
+        zhServerPlugin(), // t3code-zh-overlay
         {
           // Every server module reads its version from this manifest import.
           name: "t3code:build-version",

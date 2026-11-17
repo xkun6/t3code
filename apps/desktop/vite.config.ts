@@ -2,6 +2,8 @@ import "vite-plus/test/config";
 import * as NodeOS from "node:os";
 
 import { defaultInclude, defineConfig } from "vite-plus";
+import * as zhModule from "node:module"; // t3code-zh-overlay
+const { zhLocalePlugin } = zhModule.createRequire(import.meta.url)("../../zh/vite-plugin.cjs"); // t3code-zh-overlay
 
 import { isDesktopRuntimeExternalDependency } from "../../scripts/lib/desktop-external-packages.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
@@ -74,6 +76,7 @@ export default defineConfig({
       define: publicConfigDefine,
       outputOptions: { codeSplitting: false },
       entry: ["src/main.ts"],
+      plugins: [zhLocalePlugin()], // t3code-zh-overlay
       clean: true,
       deps: {
         alwaysBundle: (id) => !id.startsWith("node:") && !isMainProcessExternal(id),

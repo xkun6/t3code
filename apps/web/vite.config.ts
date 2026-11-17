@@ -9,6 +9,8 @@ import { playwright } from "vite-plus/test/browser-playwright";
 import { defineProject, type TestProjectInlineConfiguration } from "vite-plus/test/config";
 import "vite-plus/test/config";
 import { defineConfig, type Connect, type Plugin } from "vite-plus";
+import * as zhModule from "node:module"; // t3code-zh-overlay
+const { zhLocalePlugin } = zhModule.createRequire(import.meta.url)("../../zh/vite-plugin.cjs"); // t3code-zh-overlay
 import * as Hash from "effect/Hash";
 import pkg from "./package.json" with { type: "json" };
 import pdfjsPkg from "pdfjs-dist/package.json" with { type: "json" };
@@ -330,6 +332,7 @@ export default defineConfig(({ command }) => {
               { bundle: "desktop", path: new URL("../desktop/package.json", import.meta.url) },
             ],
           }),
+      zhLocalePlugin(), // t3code-zh-overlay
       tanstackRouter({ autoCodeSplitting: true }),
       react({ compiler: true }),
       tailwindPlugins(bundledDev),

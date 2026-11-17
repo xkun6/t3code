@@ -7,6 +7,7 @@ import { isEntrypoint } from "./entrypoint.ts";
 
 // Loads the CLI outside the launcher's module graph. Packaged builds embed it as a raw asset.
 async function loadCliMain(): Promise<typeof import("./binMain.ts")> {
+  if (!NodeSea.isSea() && import.meta.url.endsWith("/src/bin.ts")) NodeModule.createRequire(import.meta.url)("../../../zh/server-dev-hook.cjs").register(NodeModule); // t3code-zh-overlay
   if (!NodeSea.isSea()) return import("./binMain.ts");
 
   // Keep the executable's module URL so the CLI finds the web client and native packages beside it.
