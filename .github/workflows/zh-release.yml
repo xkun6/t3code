@@ -122,6 +122,8 @@ jobs:
           ref: ${{ env.BRANCH }}
           fetch-depth: 0
           filter: blob:none
+          # 合并带进来的上游提交改过 .github/workflows,默认 GITHUB_TOKEN 没有 workflows 权限,推送会被拒。
+          token: ${{ secrets.ZH_PUSH_TOKEN || github.token }}
 
       - name: 配置 git
         run: |

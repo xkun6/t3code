@@ -18,7 +18,8 @@
 
    | 名称 | 必填 | 说明 |
    | --- | --- | --- |
-   | `DEEPSEEK_API_KEY` | 是 | 建议单独建一个、只充少量余额的 key |
+   | `DEEPSEEK_API_KEY` | 是 | 建议单独建一个、只充少量余额的 key。合并冲突、挂入点修复、翻译都用它 |
+   | `ZH_PUSH_TOKEN` | 是 | fine-grained token,只选本仓库,权限 **Contents: Read and write** + **Workflows: Read and write**。合并带进来的上游提交改过 workflow 文件,默认的 `GITHUB_TOKEN` 推不上去 |
    | `DEEPSEEK_PROTOCOL` | 否 | `anthropic`(默认,Anthropic Messages)或 `responses`(OpenAI Responses) |
    | `DEEPSEEK_BASE_URL` | 否 | `anthropic` 默认 `https://api.deepseek.com/anthropic`,请求 `<地址>/v1/messages`;`responses` 默认 `https://api.openai.com/v1`,请求 `<地址>/responses` |
    | `DEEPSEEK_MODEL` | 否 | 默认 `deepseek-chat` |
