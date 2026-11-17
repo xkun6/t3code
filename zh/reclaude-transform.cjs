@@ -311,7 +311,7 @@ const FILE_TRANSFORMERS = {
       (n) =>
         n.type === "CallExpression" &&
         calleeName(n.callee, code) === "parseCliArgs" &&
-        n.arguments?.length === 1 &&
+        n.arguments?.length >= 1 &&
         code.slice(n.arguments[0].start, n.arguments[0].end).replace(/\s+/g, "") ===
           "input.settings.launchArgs",
     );
