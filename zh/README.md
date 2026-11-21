@@ -23,6 +23,7 @@
    | `DEEPSEEK_PROTOCOL` | 否 | `anthropic`(默认,Anthropic Messages)或 `responses`(OpenAI Responses) |
    | `DEEPSEEK_BASE_URL` | 否 | `anthropic` 默认 `https://api.deepseek.com/anthropic`,请求 `<地址>/v1/messages`;`responses` 默认 `https://api.openai.com/v1`,请求 `<地址>/responses` |
    | `DEEPSEEK_MODEL` | 否 | 默认 `deepseek-chat` |
+   | `DEEPSEEK_AGENT_MODEL` | 否 | 修复 Agent 用的模型,默认同 `DEEPSEEK_MODEL`。Agent 走 Anthropic 协议,`DEEPSEEK_PROTOCOL=responses` 时不启用 |
    | `ANDROID_KEYSTORE_BASE64` | 否 | APK 签名用的 keystore(base64)。不配就是调试签名 |
    | `ANDROID_KEYSTORE_PASSWORD` | 否 | keystore 密码 |
    | `ANDROID_KEY_ALIAS` | 否 | 密钥别名 |
@@ -45,6 +46,7 @@
 - **失败重试**:定时任务不会在同一个提交上重复跑已经失败的构建;推一个新提交,或手动运行(bot 里 `/t3 构建`)才会再试。
 - **翻译规则和术语表**:`zh/TRANSLATION_GUIDE.md`,它同时是发给 DeepSeek 的系统提示词。
 - **挂入点丢失**:合并后 `zh/apply.cjs` 会检查每个挂入点的标记还在不在;丢了就按锚点补回,锚点也没了才让 DeepSeek 只新增带标记的行。用了 AI 修复时运行摘要里会有 diff。
+- **上游改动弄坏覆盖层**:挂入点还缺,或覆盖层单测没过,流水线会让 Agent(Claude Code CLI + DeepSeek)读代码修 `zh/`,最多两次。改动只在 `apply.cjs` 和全部单测都通过、没碰单测文件、上游文件里只改了带标记的行时才保留,单独成一个提交,bot 通知会提醒检查。修不好时:缺的是对话翻译、Reclaude 这类挂入点就**降级发布**(界面照样汉化,这些功能本版不生效,通知和 Release 说明里列出来),缺的是构建配置挂入点就失败。降级的挂入点修好后推到 `zh`,发 `/t3 构建 重建`。
 - **关掉 Git 定时 fetch**:应用内 设置 → 后台活动 → Git fetch 间隔 设为 0。不需要改代码。
 
 ## 对话翻译
@@ -65,7 +67,9 @@
 ## 安全
 
 - 只有 `schedule` 和 `workflow_dispatch` 能触发,别人的 PR 拿不到 secrets。
-- DeepSeek 密钥只交给 `prepare` 任务里本仓库自己的 `merge-upstream.cjs`、`repair.cjs` 和 `translate.cjs`。这个任务只做 git 合并、只 `npm ci --ignore-scripts` 装 `oxc-parser` 和 `magic-string`,不安装也不执行任何上游代码。真正跑上游代码的构建任务拿不到密钥。
+- DeepSeek 密钥只交给 `prepare` 任务里本仓库自己的 `merge-upstream.cjs`、`repair.cjs`、`agent-repair.cjs` 和 `translate.cjs`。这个任务只做 git 合并、只 `npm ci --ignore-scripts` 装 `oxc-parser` 和 `magic-string`,不安装也不执行任何上游代码。
+- 修复 Agent 是固定版本的 Claude Code CLI:只能读文件、改 `zh/` 和 `apps/`、跑 `node zh/apply.cjs`、`node --test "zh/*.test.cjs"` 和只读的 git 命令;环境变量里只有 DeepSeek 密钥。`ZH_PUSH_TOKEN` 不写进 `.git/config`,只在推送那一步用。
+- 真正跑上游代码的构建任务拿不到密钥。
 - 第三方 action 都固定到了 commit SHA。
 
 ## 本地调试
@@ -77,7 +81,7 @@ node zh/apply.cjs              # 检查挂入点(已经都在时什么也不改)
 node zh/extract.cjs --stats    # 列出词典缺的文案 → zh/.cache/missing.json
 DEEPSEEK_API_KEY=... node zh/translate.cjs --limit 100
 T3CODE_LOCALE=zh-Hans vp run build:desktop:bundle
-node --test zh/localize.test.cjs zh/reclaude.test.cjs zh/translation.test.cjs zh/merge-upstream.test.cjs
+node --test "zh/*.test.cjs"
 ```
 
 不设 `T3CODE_LOCALE=zh-Hans` 时,UI 翻译插件什么也不做;设 `T3CODE_RECLAUDE=0` 可关闭 `rec` / `recx` 服务端兼容注入,设 `T3CODE_TRANSLATION=0` 可关闭对话翻译注入。

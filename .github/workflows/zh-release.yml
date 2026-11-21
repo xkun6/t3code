@@ -6,7 +6,8 @@ name: 中文版构建
 # dsh-bot 的 t3code 插件轮询这个 workflow 的运行结果发通知,也可以用 workflow_dispatch 立即触发。
 #
 # 安全:只有 schedule / workflow_dispatch 触发。DeepSeek 密钥只交给 prepare 任务里本仓库自己的脚本
-# (merge-upstream / repair / translate),那个任务只做 git 合并和解析源码,不安装、不执行上游代码;
+# (merge-upstream / repair / translate / agent-repair),那个任务只做 git 合并和解析源码,不安装、不执行上游代码;
+# 唯一装的外部工具是固定版本的 Claude Code CLI(修复 Agent),它的工具和命令有白名单,拿不到推送令牌。
 # 构建任务拿不到密钥。
 
 on:
@@ -104,26 +105,33 @@ jobs:
     needs: check
     if: needs.check.outputs.build == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
     permissions:
       contents: write
     outputs:
       sha: ${{ steps.push.outputs.sha }}
+      degraded: ${{ steps.agent.outputs.degraded }}
     env:
       TAG: ${{ needs.check.outputs.tag }}
       DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
       DEEPSEEK_BASE_URL: ${{ secrets.DEEPSEEK_BASE_URL }}
       DEEPSEEK_MODEL: ${{ secrets.DEEPSEEK_MODEL }}
+      DEEPSEEK_AGENT_MODEL: ${{ secrets.DEEPSEEK_AGENT_MODEL }}
       DEEPSEEK_PROTOCOL: ${{ secrets.DEEPSEEK_PROTOCOL }}
     steps:
+      # 推送令牌不写进 .git/config:修复 Agent 能读工作区,只有推送那一步拿得到它。
       - name: 检出 zh 分支
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ env.BRANCH }}
           fetch-depth: 0
           filter: blob:none
-          # 合并带进来的上游提交改过 .github/workflows,默认 GITHUB_TOKEN 没有 workflows 权限,推送会被拒。
-          token: ${{ secrets.ZH_PUSH_TOKEN || github.token }}
+          persist-credentials: false
+
+      - name: 安装 Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 24
 
       - name: 配置 git
         run: |
@@ -147,16 +155,17 @@ jobs:
         if: steps.merge.outputs.ai_resolved != '' && steps.merge.outputs.ai_resolved != '0'
         run: echo "::warning::AI 解决了 ${{ steps.merge.outputs.ai_resolved }} 个文件的合并冲突,请检查合并提交。"
 
-      # 合并后挂入点仍应都在;丢了的由 apply.cjs 补回,锚点也没了才交给 AI。
+      # 合并后挂入点仍应都在;丢了的由 apply.cjs 补回,锚点也没了才交给 AI。还不行就交给下面的修复 Agent。
       - id: apply
         name: 校验构建配置挂入点
+        continue-on-error: true
         run: |
           set -uo pipefail
-          node zh/apply.cjs
-          code=$?
+          node zh/apply.cjs 2>&1 | tee "$RUNNER_TEMP/apply.log"
+          code=${PIPESTATUS[0]}
           if [[ $code -eq 2 ]]; then
-            node zh/repair.cjs || exit 1
-            node zh/apply.cjs || exit 1
+            node zh/repair.cjs 2>&1 | tee -a "$RUNNER_TEMP/apply.log" || exit 1
+            node zh/apply.cjs 2>&1 | tee -a "$RUNNER_TEMP/apply.log" || exit 1
             echo "repaired=true" >> "$GITHUB_OUTPUT"
             {
               echo "## AI 修复了构建配置挂入点"
@@ -174,7 +183,37 @@ jobs:
 
       - id: tests
         name: 校验覆盖层单测
-        run: node --test zh/localize.test.cjs zh/reclaude.test.cjs zh/translation.test.cjs zh/merge-upstream.test.cjs
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          node --test "zh/*.test.cjs" 2>&1 | tee "$RUNNER_TEMP/tests.log"
+
+      # 上游改了挂入点附近的代码:Agent 读代码修 zh/,过了 apply.cjs 和全部单测才保留,否则撤销;
+      # 构建配置挂入点仍缺就失败,只缺对话翻译 / Reclaude 这类挂入点就降级发布。见 zh/agent-repair.cjs。
+      - id: agent
+        name: Agent 修复覆盖层
+        if: steps.apply.outcome == 'failure' || steps.tests.outcome == 'failure'
+        timeout-minutes: 60
+        run: |
+          set -euo pipefail
+          npm install -g --prefix "$RUNNER_TEMP/claude" --no-audit --no-fund @anthropic-ai/claude-code@2.1.318
+          previous="$(git ls-remote --tags --refs "$UPSTREAM_REPO" 'v*' | sed 's|.*refs/tags/||' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | grep -B1 -x "$TAG" | head -n 1)"
+          git fetch -q --no-tags --filter=blob:none "$UPSTREAM_REPO" \
+            "refs/tags/$TAG:refs/tags/$TAG" "refs/tags/$previous:refs/tags/$previous"
+          CLAUDE_BIN="$RUNNER_TEMP/claude/bin/claude" \
+            node zh/agent-repair.cjs "$TAG" "$previous" "$RUNNER_TEMP/apply.log" "$RUNNER_TEMP/tests.log"
+
+      # 标记步骤:dsh-bot 看到它们执行了就在通知里提醒。
+      - name: AI 修复了覆盖层
+        if: steps.agent.outputs.fixed == 'true'
+        run: echo "::warning::上游改动弄坏了覆盖层,由 Agent 修复,请检查提交。"
+
+      - name: "降级发布:${{ steps.agent.outputs.degraded }}"
+        if: steps.agent.outputs.degraded != ''
+        env:
+          DEGRADED: ${{ steps.agent.outputs.degraded }}
+        run: echo "::warning::这些挂入点本版不生效:$DEGRADED"
 
       - name: 提取文案
         run: node zh/extract.cjs --stats
@@ -186,14 +225,17 @@ jobs:
       # 翻译失败也先把合并和已翻译的部分推上去,下次只补剩下的。
       - id: push
         name: 提交并推送
-        if: always() && steps.tests.outcome == 'success'
+        if: always() && (steps.agent.outcome == 'success' || (steps.apply.outcome == 'success' && steps.tests.outcome == 'success'))
+        env:
+          # 合并带进来的上游提交改过 .github/workflows,默认 GITHUB_TOKEN 没有 workflows 权限,推送会被拒。
+          PUSH_TOKEN: ${{ secrets.ZH_PUSH_TOKEN || github.token }}
         run: |
           set -euo pipefail
           git add -A -- apps zh/locales
           if ! git diff --cached --quiet; then
             git commit -q -m "chore(zh): 翻译 $TAG 新增文案,校验挂入点"
           fi
-          git push -q origin "HEAD:$BRANCH"
+          git push -q "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:$BRANCH"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
   windows:
@@ -240,14 +282,18 @@ jobs:
         run: vp run build:desktop:bundle
 
       # 上游配置把覆盖层插件顶掉时构建照样成功,这里确认挂入点真的进了产物。
+      # 降级发布时缺的挂入点已经在 prepare 里报过,这里只警告;没汉化永远不发布。
       - name: 校验覆盖层已打包
+        env:
+          DEGRADED: ${{ needs.prepare.outputs.degraded }}
         run: |
           set -uo pipefail
           check() { grep -lq "$2" $1 || { echo "::error::$3"; failed=1; }; }
+          feature() { if [[ -n "$DEGRADED" ]]; then grep -lq "$2" $1 || echo "::warning::$3(降级发布)"; else check "$@"; fi; }
           failed=0
-          check 'apps/server/dist/*.mjs' 'isReclaudeClaude' "服务端产物缺少 Reclaude 挂入点"
-          check 'apps/server/dist/*.mjs' 'server.zhTranslation' "服务端产物缺少对话翻译 RPC"
-          check 'apps/web/dist/assets/*.js' 'server.zhTranslation' "网页产物缺少对话翻译界面"
+          feature 'apps/server/dist/*.mjs' 'isReclaudeClaude' "服务端产物缺少 Reclaude 挂入点"
+          feature 'apps/server/dist/*.mjs' 'server.zhTranslation' "服务端产物缺少对话翻译 RPC"
+          feature 'apps/web/dist/assets/*.js' 'server.zhTranslation' "网页产物缺少对话翻译界面"
           check 'apps/web/dist/assets/*.js' '设置' "网页产物没有汉化"
           exit $failed
 
@@ -372,6 +418,7 @@ jobs:
     env:
       TAG: ${{ needs.check.outputs.tag }}
       SHA: ${{ needs.prepare.outputs.sha }}
+      DEGRADED: ${{ needs.prepare.outputs.degraded }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: 下载构建产物
@@ -393,5 +440,5 @@ jobs:
             gh release create "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" \
               --target "$SHA" --latest \
               --title "T3 Code $TAG 中文版" \
-              --notes "基于上游 [$TAG](https://github.com/pingdotgg/t3code/releases/tag/$TAG) 合并构建(zh 分支 ${SHA:0:10}),界面文案由 DeepSeek 翻译。Windows 安装包未签名,不含 WSL 后端。"
+              --notes "基于上游 [$TAG](https://github.com/pingdotgg/t3code/releases/tag/$TAG) 合并构建(zh 分支 ${SHA:0:10}),界面文案由 DeepSeek 翻译。Windows 安装包未签名,不含 WSL 后端。${DEGRADED:+ 本版降级发布,这些挂入点不生效:$DEGRADED。}"
           fi
