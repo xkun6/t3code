@@ -176,20 +176,22 @@ const SERVER_TRANSFORMERS = {
   },
 
   "apps/server/src/orchestration-v2/ProviderTurnStartService.ts"(code, ast, ms, warn) {
+    // Upstream may wrap the call, e.g. withMessageSenderNote(providerMessage, projectComposerContextForProvider(...)).
+    const contextCalls = (init) => (init ? find(init, (n) => composerContextTextProperty(n, code) !== null) : []);
     const userText = find(
       ast,
       (n, ancestors) =>
         n.type === "VariableDeclarator" &&
         n.id?.type === "Identifier" &&
         n.id.name === "userText" &&
-        composerContextTextProperty(n.init, code) !== null &&
+        contextCalls(n.init).length === 1 &&
         inGenerator(ancestors),
     );
     if (userText.length !== 1 || !/import \* as ServerConfig from/.test(code)) {
       warn("userText");
       return 0;
     }
-    const value = composerContextTextProperty(userText[0].node.init, code).value;
+    const value = composerContextTextProperty(contextCalls(userText[0].node.init)[0].node, code).value;
     const messageName = code.slice(value.object.start, value.object.end);
     // A queued run can start after a restart, before any client connects, so this hook also names the state directory.
     ms.overwrite(
@@ -556,7 +558,7 @@ const MOBILE_TRANSFORMERS = {
     );
     if (
       slots.length !== 1 ||
-      !/\bconst usesLargeControls\b/.test(code) ||
+      !/\bconst (?:\{[^}]*\b)?usesLargeControls\b/.test(code) ||
       !/\bprops\.selectedThread\.id\b/.test(code) ||
       !/\breadonly environmentId: EnvironmentId;/.test(code)
     ) {
