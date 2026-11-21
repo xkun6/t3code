@@ -255,16 +255,18 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ needs.prepare.outputs.sha }}
-          persist-credentials: false
+          # 不用 persist-credentials: false,原因见 prepare 的检出;令牌在下一步删掉。
           sparse-checkout: |
             /*
             !/.repos/
           sparse-checkout-cone-mode: false
 
-      # 官方构建内置的公开 T3 Connect 配置(不是密钥),见上游 .env.example。
+      # 官方构建内置的公开 T3 Connect 配置(不是密钥),见上游 .env.example。下面要跑上游代码,先删掉检出留下的令牌。
       - &env-file
         name: 准备公开配置
-        run: cp .env.example .env
+        run: |
+          git config --local --unset-all http.https://github.com/.extraheader || true
+          cp .env.example .env
 
       - name: 安装依赖
         uses: ./.github/actions/setup-ci-deps
