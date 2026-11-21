@@ -119,14 +119,14 @@ jobs:
       DEEPSEEK_AGENT_MODEL: ${{ secrets.DEEPSEEK_AGENT_MODEL }}
       DEEPSEEK_PROTOCOL: ${{ secrets.DEEPSEEK_PROTOCOL }}
     steps:
-      # 推送令牌不写进 .git/config:修复 Agent 能读工作区,只有推送那一步拿得到它。
+      # 不用 persist-credentials: false:那会对上游 .repos/ 里没登记在 .gitmodules 的 gitlink 跑
+      # git submodule foreach 而失败。改为下一步删掉写进 .git/config 的令牌(修复 Agent 能读工作区)。
       - name: 检出 zh 分支
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ env.BRANCH }}
           fetch-depth: 0
           filter: blob:none
-          persist-credentials: false
 
       - name: 安装 Node
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
@@ -137,6 +137,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local --unset-all http.https://github.com/.extraheader || true
 
       - name: 安装覆盖层依赖
         working-directory: zh
