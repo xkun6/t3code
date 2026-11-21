@@ -161,7 +161,8 @@ jobs:
         name: 校验构建配置挂入点
         continue-on-error: true
         run: |
-          set -uo pipefail
+          # 默认 shell 是 bash -e:要读 apply.cjs 的退出码(2 = 锚点没了)就得关掉 -e。
+          set +e -uo pipefail
           node zh/apply.cjs 2>&1 | tee "$RUNNER_TEMP/apply.log"
           code=${PIPESTATUS[0]}
           if [[ $code -eq 2 ]]; then
@@ -195,14 +196,24 @@ jobs:
         name: Agent 修复覆盖层
         if: steps.apply.outcome == 'failure' || steps.tests.outcome == 'failure'
         timeout-minutes: 60
+        # 装不上 Claude Code 或拉不到上游标签都不算失败:Agent 起不来,agent-repair.cjs 照样降级发布。
         run: |
-          set -euo pipefail
-          npm install -g --prefix "$RUNNER_TEMP/claude" --no-audit --no-fund @anthropic-ai/claude-code@2.1.318
+          set +e -uo pipefail
+          prefix="$RUNNER_TEMP/claude"
+          # npm 12 默认不跑依赖的 install 脚本,Claude Code 的原生程序要靠它的 install.cjs 放到位。
+          if ! { npm install -g --prefix "$prefix" --no-audit --no-fund @anthropic-ai/claude-code@2.1.318 \
+            && node "$prefix/lib/node_modules/@anthropic-ai/claude-code/install.cjs" \
+            && "$prefix/bin/claude" --version; }; then
+            echo "::warning::Claude Code 安装失败,Agent 不会运行。"
+          fi
           previous="$(git ls-remote --tags --refs "$UPSTREAM_REPO" 'v*' | sed 's|.*refs/tags/||' \
             | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | grep -B1 -x "$TAG" | head -n 1)"
-          git fetch -q --no-tags --filter=blob:none "$UPSTREAM_REPO" \
-            "refs/tags/$TAG:refs/tags/$TAG" "refs/tags/$previous:refs/tags/$previous"
-          CLAUDE_BIN="$RUNNER_TEMP/claude/bin/claude" \
+          if [[ -z "$previous" ]] || ! git fetch -q --no-tags --filter=blob:none "$UPSTREAM_REPO" \
+            "refs/tags/$TAG:refs/tags/$TAG" "refs/tags/$previous:refs/tags/$previous"; then
+            echo "::warning::拉不到上游的上一个版本标签,Agent 看不到上游改了什么。"
+            previous="${previous:-$TAG}"
+          fi
+          CLAUDE_BIN="$prefix/bin/claude" \
             node zh/agent-repair.cjs "$TAG" "$previous" "$RUNNER_TEMP/apply.log" "$RUNNER_TEMP/tests.log"
 
       # 标记步骤:dsh-bot 看到它们执行了就在通知里提醒。

@@ -599,7 +599,15 @@ function transformWithMap(code, file, transformers, specifier, binding, options)
     return null;
   }
   const ms = new MagicString(code);
-  if (transformer(code, parsed.program, ms, warn) === 0) return { code, map: null, warnings };
+  let applied;
+  try {
+    applied = transformer(code, parsed.program, ms, warn);
+  } catch (error) {
+    // A degraded release builds with hooks that no longer fit; the build must survive them.
+    warn(`threw: ${error.message}`);
+    return { code, map: null, warnings };
+  }
+  if (applied === 0) return { code, map: null, warnings };
   // Hooks that only extend a list reference nothing from the runtime module.
   if (ms.toString().includes(`${binding}.`)) ms.prepend(`import * as ${binding} from "${specifier}";\n`);
   return { code: ms.toString(), map: ms.generateMap({ hires: "boundary", source: file }), warnings };

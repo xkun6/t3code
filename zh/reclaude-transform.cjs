@@ -698,12 +698,20 @@ function transformReclaudeServerWithMap(code, file, options = {}) {
 
   const ms = new MagicString(code);
   const warnings = [];
-  const applied = transformer(code, parsed.program, ms, (hookName) => {
+  const warn = (hookName) => {
     warnings.push(`${rel}#${hookName}`);
     if (!options.silent) {
       console.warn(`::warning::reclaude hook anchor not found in ${rel}: ${hookName}`);
     }
-  });
+  };
+  let applied;
+  try {
+    applied = transformer(code, parsed.program, ms, warn);
+  } catch (error) {
+    // A degraded release builds with hooks that no longer fit; the build must survive them.
+    warn(`threw: ${error.message}`);
+    return null;
+  }
   if (applied === 0) return null;
 
   prependRuntimeImport(ms, code);

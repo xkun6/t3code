@@ -30,8 +30,8 @@ const ALLOWED_TOOLS = [
   "Read",
   "Grep",
   "Glob",
+  // Edit rules also cover Write; Claude Code rejects Write(path) rules.
   "Edit(zh/**)",
-  "Write(zh/**)",
   "Edit(apps/**)",
   "Bash(node zh/apply.cjs)",
   `Bash(node --test ${TESTS})`,
