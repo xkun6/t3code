@@ -259,6 +259,7 @@ test("apply.cjs is idempotent on all config targets and satisfies repair.cjs add
     "apps/server/vite.config.ts",
     "apps/server/src/bin.ts",
     "apps/mobile/metro.config.js",
+    "apps/mobile/app.config.ts",
     "apps/mobile/modules/t3-native-controls/android/src/main/java/expo/modules/t3nativecontrols/T3WorkspaceNavigationModule.kt",
   ];
 

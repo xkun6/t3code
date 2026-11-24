@@ -95,6 +95,19 @@ const EDITS = [
       },
     ],
   },
+  {
+    // Compiled into the native app, which Metro never sees: crash reports go nowhere from first launch.
+    file: "apps/mobile/app.config.ts",
+    goal:
+      'Right before `export default config;`, add one line that sets `config.extra.eas.observe` to `{ endpointUrl: "https://observe.invalid" }`, keeping the rest of `extra` and `extra.eas`, so the expo-observe endpoint compiled into the native app never reaches the relay.',
+    steps: [
+      {
+        anchor: /^export default config;/m,
+        insert: (match) =>
+          `config.extra = { ...config.extra, eas: { ...config.extra?.eas, observe: { endpointUrl: "https://observe.invalid" } } }; // ${MARK}\n${match}`,
+      },
+    ],
+  },
 ];
 
 // Native UI the Metro localizer never sees. Each anchor matches one whole function, whose quoted

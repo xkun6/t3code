@@ -499,4 +499,5 @@ const config: ExpoConfig = {
   },
 };
 
+config.extra = { ...config.extra, eas: { ...config.extra?.eas, observe: { endpointUrl: "https://observe.invalid" } } }; // t3code-zh-overlay
 export default config;

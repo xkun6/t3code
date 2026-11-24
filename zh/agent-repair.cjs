@@ -3,7 +3,8 @@
 // Its work is kept only when apply.cjs and every overlay test pass, it left the gate files alone, and
 // outside zh/ it touched nothing but lines marked t3code-zh-overlay; otherwise it is reverted.
 // Hooks still missing after that ship degraded: the build skips them and the step names them.
-// Exits 1 only when apply.cjs still fails, since a build without the config hooks has no overlay at all.
+// Exits 1 when apply.cjs still fails, since a build without the config hooks has no overlay at all,
+// and when zh/telemetry.test.cjs fails: a release never ships with telemetry on.
 // Env: DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_PROTOCOL, DEEPSEEK_MODEL, DEEPSEEK_AGENT_MODEL, CLAUDE_BIN.
 // Usage: node zh/agent-repair.cjs <tag> <previous tag> [failure log...]
 "use strict";
@@ -15,6 +16,7 @@ const { execFileSync, spawnSync } = require("node:child_process");
 const ROOT = path.resolve(__dirname, "..");
 const MARK = "t3code-zh-overlay";
 const TESTS = "zh/*.test.cjs";
+const TELEMETRY_TESTS = "zh/telemetry.test.cjs";
 const ATTEMPTS = 2;
 const AGENT_TIMEOUT_MS = 25 * 60 * 1000;
 const LOG_TAIL_CHARS = 15_000;
@@ -35,6 +37,8 @@ const ALLOWED_TOOLS = [
   "Edit(apps/**)",
   "Bash(node zh/apply.cjs)",
   `Bash(node --test ${TESTS})`,
+  "Bash(node zh/telemetry-surface.cjs)",
+  "Bash(node zh/telemetry-surface.cjs --write)",
   "Bash(git diff:*)",
   "Bash(git log:*)",
   "Bash(git show:*)",
@@ -71,6 +75,7 @@ function failingTests(tap) {
 function missingHooks(root = ROOT) {
   const reclaude = require("./reclaude-transform.cjs");
   const translation = require("./translation-transform.cjs");
+  const telemetry = require("./telemetry-transform.cjs");
   const groups = [
     [reclaude.TARGET_FILES, reclaude.transformReclaudeServerWithMap],
     [translation.SERVER_TARGET_FILES, translation.transformTranslationServerWithMap],
@@ -89,6 +94,7 @@ function missingHooks(root = ROOT) {
       missing.push(...(result ? result.warnings : [rel]));
     }
   }
+  missing.push(...telemetry.missingTelemetryHooks(root));
   return missing;
 }
 
@@ -111,6 +117,7 @@ How to work:
 - Fix the overlay in zh/: the build-time transforms (zh/translation-transform.cjs, zh/reclaude-transform.cjs, zh/localize.cjs) and the anchors in zh/apply.cjs. Follow upstream's new code and keep every hook doing the same job as before.
 - In upstream files (apps/...) you may only add or change lines that carry the comment \`${MARK}\`.
 - Do not edit zh/*.test.cjs, zh/agent-repair.cjs, zh/UPSTREAM, zh/locales/ or zh/package*.json. The tests are the acceptance check; if one is wrong for the new upstream, say why and stop.
+- Telemetry stays off. zh/telemetry-transform.cjs switches off everything upstream sends home (analytics, relay traces, mobile crash reports); zh/telemetry-surface.json fingerprints every upstream file that could send it. If zh/telemetry.test.cjs fails, run \`node zh/telemetry-surface.cjs\` and read \`git diff ${previous} ${tag} -- <file>\` for each file it lists. Anything that could now send data (a new endpoint, exporter, beacon, or a moved switch) must be switched off in zh/telemetry-transform.cjs. Only then run \`node zh/telemetry-surface.cjs --write\`. Never weaken a telemetry hook to make a test pass.
 - Check with \`node zh/apply.cjs\` (must exit 0) and \`node --test ${TESTS}\` (must pass). Repeat until both pass.
 - Do not commit; the pipeline reviews and commits your change.
 
@@ -228,6 +235,14 @@ function main() {
   if (!apply.ok) {
     console.error(apply.output);
     console.log("::error::构建配置挂入点仍然缺失,没有覆盖层就不发布。");
+    writeOutputs({ fixed, degraded: "" });
+    process.exit(1);
+  }
+  const telemetryTests = run(["--test", "--test-reporter=tap", TELEMETRY_TESTS]);
+  if (!telemetryTests.ok) {
+    console.error(telemetryTests.output);
+    console.log("::error::遥测关闭没有通过校验,本版不发布。");
+    summary(["## 遥测关闭没有通过校验,本版不发布", "", "```", tail(telemetryTests.output, 20_000), "```"]);
     writeOutputs({ fixed, degraded: "" });
     process.exit(1);
   }

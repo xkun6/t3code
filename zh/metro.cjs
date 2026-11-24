@@ -15,6 +15,7 @@ function transformHash() {
     DICT_PATH,
     path.join(__dirname, "localize.cjs"),
     path.join(__dirname, "translation-transform.cjs"),
+    path.join(__dirname, "telemetry-transform.cjs"),
   ];
   const hash = crypto.createHash("sha256");
   hash.update(`${isEnabled()}:${isTranslationEnabled()}`);

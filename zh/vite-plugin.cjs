@@ -14,6 +14,7 @@ const {
   transformReclaudeServerWithMap,
 } = require("./reclaude-transform.cjs");
 const translation = require("./translation-transform.cjs");
+const { transformTelemetryWithMap } = require("./telemetry-transform.cjs");
 
 const VIRTUAL_RUNTIME_ID = `\0${RUNTIME_SPECIFIER}`;
 const RUNTIME_FILE_PATH = path.join(__dirname, "reclaude-runtime.mjs");
@@ -40,6 +41,9 @@ function zhLocalePlugin() {
     },
     transform(code, id) {
       const file = id.split("?")[0];
+      // Telemetry targets are disjoint from the others and never localized.
+      const telemetry = transformTelemetryWithMap(code, file);
+      if (telemetry) return telemetry;
       const translated = translation.transformTranslationWebWithMap(code, file);
       const source = translated?.map ? translated.code : code;
       const localized = isEnabled() ? localizeWithMap(source, file) : null;
@@ -72,8 +76,9 @@ function zhServerPlugin() {
     },
     transform(code, id) {
       const file = id.split("?")[0];
-      // The two overlays target disjoint files.
+      // The overlays target disjoint files.
       const result =
+        transformTelemetryWithMap(code, file) ??
         (isReclaudeEnabled() ? transformReclaudeServerWithMap(code, file, { bundle: true }) : null) ??
         translation.transformTranslationServerWithMap(code, file);
       return result?.map ? { code: result.code, map: result.map } : null;

@@ -191,12 +191,13 @@ jobs:
           node --test "zh/*.test.cjs" 2>&1 | tee "$RUNNER_TEMP/tests.log"
 
       # 上游改了挂入点附近的代码:Agent 读代码修 zh/,过了 apply.cjs 和全部单测才保留,否则撤销;
-      # 构建配置挂入点仍缺就失败,只缺对话翻译 / Reclaude 这类挂入点就降级发布。见 zh/agent-repair.cjs。
+      # 构建配置挂入点仍缺、或遥测没关上(zh/telemetry.test.cjs)就失败不发版,只缺对话翻译 / Reclaude 这类挂入点就降级发布。
+      # 上游改了遥测相关文件也会走到这里:Agent 审查 diff,确认仍然全关后才更新指纹基线。见 zh/agent-repair.cjs。
       - id: agent
         name: Agent 修复覆盖层
         if: steps.apply.outcome == 'failure' || steps.tests.outcome == 'failure'
         timeout-minutes: 60
-        # 装不上 Claude Code 或拉不到上游标签都不算失败:Agent 起不来,agent-repair.cjs 照样降级发布。
+        # 装不上 Claude Code 或拉不到上游标签都不算失败:Agent 起不来,agent-repair.cjs 照样降级发布(遥测没关上时除外)。
         run: |
           set +e -uo pipefail
           prefix="$RUNNER_TEMP/claude"
@@ -309,6 +310,9 @@ jobs:
           feature 'apps/server/dist/*.mjs' 'server.zhTranslation' "服务端产物缺少对话翻译 RPC"
           feature 'apps/web/dist/assets/*.js' 'server.zhTranslation' "网页产物缺少对话翻译界面"
           check 'apps/web/dist/assets/*.js' '设置' "网页产物没有汉化"
+          # 遥测关闭从不降级:没关上就不发版。
+          check 'apps/server/dist/*.mjs' 'T3CODE_ZH_TELEMETRY_OFF' "服务端产物没有关闭遥测"
+          if grep -lq 'ingest\.t3\.codes' apps/server/dist/*.mjs; then echo "::error::服务端产物仍含遥测地址 ingest.t3.codes"; failed=1; fi
           exit $failed
 
       - name: 安装 Rust

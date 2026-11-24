@@ -1,27 +1,24 @@
 // Node module loader hook for unbundled `vp run dev` (`node --watch src/bin.ts`),
 // applying the exact same server AST transforms used by `zhServerPlugin` in `vp pack`:
-// Reclaude / Recodex support and conversation translation.
+// Reclaude / Recodex support, conversation translation and telemetry off.
 "use strict";
 
 const path = require("node:path");
 const { pathToFileURL, fileURLToPath } = require("node:url");
 const {
   RUNTIME_SPECIFIER,
-  isReclaudeEnabled,
   transformReclaudeServer,
 } = require("./reclaude-transform.cjs");
 const translation = require("./translation-transform.cjs");
+const { transformTelemetryWithMap } = require("./telemetry-transform.cjs");
 
 const RUNTIME_URL = pathToFileURL(path.join(__dirname, "reclaude-runtime.mjs")).href;
 const TRANSLATION_RUNTIME_URL = pathToFileURL(path.join(__dirname, "translation-runtime.mjs")).href;
 let registered = false;
 
 function register(nodeModule) {
-  if (
-    registered ||
-    (!isReclaudeEnabled() && !translation.isTranslationEnabled()) ||
-    typeof nodeModule?.registerHooks !== "function"
-  ) {
+  // Telemetry stays off even with both features disabled, so there is always something to register.
+  if (registered || typeof nodeModule?.registerHooks !== "function") {
     return;
   }
   registered = true;
@@ -48,7 +45,9 @@ function register(nodeModule) {
             ? loaded.source
             : null;
       if (rawSource === null) return loaded;
-      // The two overlays target disjoint files.
+      // The overlays target disjoint files.
+      const telemetrySource = transformTelemetryWithMap(rawSource, filePath)?.code;
+      if (telemetrySource) return { ...loaded, source: telemetrySource };
       const reclaudeSource = transformReclaudeServer(rawSource, filePath, { bundle: false });
       const nextSource =
         reclaudeSource === rawSource
