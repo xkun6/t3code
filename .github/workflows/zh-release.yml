@@ -481,12 +481,20 @@ jobs:
           set -euo pipefail
           ls -l dist
           files=(dist/*.exe dist/*.blockmap dist/latest.yml dist/*.apk)
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+          notes="基于上游 [$TAG](https://github.com/pingdotgg/t3code/releases/tag/$TAG) 合并构建(zh 分支 ${SHA:0:10}),界面文案由 DeepSeek 翻译。Windows 安装包未签名,不含 WSL 后端。${DEGRADED:+ 本版降级发布,这些挂入点不生效:$DEGRADED。}"
+          if draft="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft 2>/dev/null)"; then
             gh release upload "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
-            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+            # 重建:标签和说明跟着这次的提交走,否则 Release 页面、源码包还停在第一次构建。GITHUB_TOKEN 没有
+            # workflows 权限,不能把标签挪到带 workflow 改动的提交上,所以删掉标签,让下面发布时按 --target 重新打
+            # (和首次发布同一条路)。删掉到发布之间 Release 短暂变回草稿;中途失败就留下草稿,再运行一次会补上。
+            if [[ "$draft" == "false" ]]; then
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG"
+              notes="$notes 重建于 $(date -u '+%Y-%m-%d %H:%M') UTC;版本号没变,已安装的桌面端不会自动更新,需要手动下载安装。"
+            fi
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --target "$SHA" --draft=false --latest --notes "$notes"
           else
             gh release create "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" \
               --target "$SHA" --latest \
               --title "T3 Code $TAG 中文版" \
-              --notes "基于上游 [$TAG](https://github.com/pingdotgg/t3code/releases/tag/$TAG) 合并构建(zh 分支 ${SHA:0:10}),界面文案由 DeepSeek 翻译。Windows 安装包未签名,不含 WSL 后端。${DEGRADED:+ 本版降级发布,这些挂入点不生效:$DEGRADED。}"
+              --notes "$notes"
           fi
