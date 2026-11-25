@@ -28,11 +28,9 @@ test("telemetry: server analytics is off and has no host", () => {
 });
 
 test("telemetry: provider logins are never read", () => {
-  const code = transformed("apps/server/src/telemetry/Identify.ts");
-  assert.match(
-    code,
-    /readProviderLogins"\)\(function\* \(\s*homeDirectory: string,?\s*\) \{\r?\n  return \{ codexTokens: Option\.none\(\), claudeJson: Option\.none\(\) \};/,
-  );
+  // Upstream dropped these reads in v0.1.12; any return blocks the release.
+  const code = read("apps/server/src/telemetry/Identify.ts");
+  assert.doesNotMatch(code, /HomeDirectory|\.codex|\.claude|auth\.json|id_token|oauthAccount/);
 });
 
 test("telemetry: relay tracing has no exporter in any client", () => {
