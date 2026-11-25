@@ -2,6 +2,8 @@
 // zh/telemetry-surface.json is the reviewed baseline: when an upstream merge adds, changes or removes
 // one of these files, zh/telemetry.test.cjs fails until someone reviews the diff, keeps
 // zh/telemetry-transform.cjs covering it, and rewrites the baseline with `--write`.
+// PATTERNS only find code that still uses known names; zh/telemetry-audit.cjs has an agent find the rest
+// and adds those files to the baseline, which keeps them tracked whatever they contain.
 // Usage: node zh/telemetry-surface.cjs [--write]
 "use strict";
 
@@ -41,14 +43,21 @@ function walk(dir, out) {
   return out;
 }
 
-/** `{ relativePath: sha256 }` for every matching file, LF-normalized so checkouts agree. */
-function scan(root = ROOT) {
+/**
+ * `{ relativePath: sha256 }`, LF-normalized so checkouts agree, for every file matching PATTERNS plus
+ * every `tracked` file. Tracked files (the baseline, and what zh/telemetry-audit.cjs adds) stay in the
+ * surface after upstream renames the names PATTERNS look for, so a rename shows up as a change.
+ */
+function scan(root = ROOT, tracked = Object.keys(readBaseline())) {
   const files = SCAN_DIRS.flatMap((dir) => walk(path.join(root, dir), []));
-  files.push(...EXTRA_FILES.map((file) => path.join(root, file)).filter((file) => fs.existsSync(file)));
+  files.push(...EXTRA_FILES.map((file) => path.join(root, file)));
+  const always = new Set(tracked.map((rel) => path.join(root, rel)));
+  files.push(...always);
   const surface = {};
-  for (const file of files) {
+  for (const file of new Set(files)) {
+    if (!fs.existsSync(file)) continue;
     const text = fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n");
-    if (!PATTERNS.some((pattern) => pattern.test(text))) continue;
+    if (!always.has(file) && !PATTERNS.some((pattern) => pattern.test(text))) continue;
     // The overlay's own marked lines must not make every apply look like an upstream change.
     const upstream = text.split("\n").filter((line) => !line.includes("t3code-zh-overlay")).join("\n");
     const rel = path.relative(root, file).split(path.sep).join("/");
@@ -59,6 +68,15 @@ function scan(root = ROOT) {
 
 function readBaseline() {
   return fs.existsSync(BASELINE_PATH) ? JSON.parse(fs.readFileSync(BASELINE_PATH, "utf8")) : {};
+}
+
+function writeBaseline(surface) {
+  fs.writeFileSync(BASELINE_PATH, `${JSON.stringify(surface, null, 2)}\n`);
+}
+
+/** Tracked files the agent dropped from the surface while they still exist upstream. */
+function droppedFiles(before, after, root = ROOT) {
+  return Object.keys(before).filter((rel) => !(rel in after) && fs.existsSync(path.join(root, rel)));
 }
 
 /** Files added, changed or removed relative to the reviewed baseline. */
@@ -74,7 +92,7 @@ function diffSurface(current = scan(), baseline = readBaseline()) {
 function main() {
   const current = scan();
   if (process.argv.includes("--write")) {
-    fs.writeFileSync(BASELINE_PATH, `${JSON.stringify(current, null, 2)}\n`);
+    writeBaseline(current);
     console.log(`wrote ${Object.keys(current).length} files to ${path.relative(ROOT, BASELINE_PATH)}`);
     return;
   }
@@ -86,4 +104,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { BASELINE_PATH, scan, diffSurface, readBaseline };
+module.exports = { BASELINE_PATH, scan, diffSurface, readBaseline, writeBaseline, droppedFiles };

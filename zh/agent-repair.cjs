@@ -24,6 +24,9 @@ const LOG_TAIL_CHARS = 15_000;
 const PROTECTED = [
   /^zh\/[^/]*\.test\.cjs$/,
   /^zh\/agent-repair\.cjs$/,
+  // The telemetry gates: what counts as telemetry surface, and the audit that grows it.
+  /^zh\/telemetry-(surface|audit)\.cjs$/,
+  /^zh\/TELEMETRY_AUDITED$/,
   /^zh\/UPSTREAM$/,
   /^zh\/locales\//,
   /^zh\/package(-lock)?\.json$/,
@@ -128,7 +131,19 @@ ${failures}
 ${feedback ? `\nA previous attempt was rejected and reverted: ${feedback}\n` : ""}`;
 }
 
-function runAgent(prompt) {
+/** Why the agent cannot run here, or null. */
+function agentUnavailable() {
+  const protocol = process.env.DEEPSEEK_PROTOCOL?.trim() || "anthropic";
+  if (!process.env.DEEPSEEK_API_KEY) return "没有 DEEPSEEK_API_KEY";
+  if (protocol !== "anthropic") return `Agent 需要 Anthropic 协议,DEEPSEEK_PROTOCOL=${protocol}`;
+  return null;
+}
+
+/**
+ * Runs Claude Code headless on DeepSeek with only `allowedTools`. With `capture`, returns the final
+ * reply text (null when the CLI failed); otherwise streams the transcript to the log.
+ */
+function runClaude(prompt, allowedTools, { capture = false } = {}) {
   const base = process.env.DEEPSEEK_BASE_URL?.trim() || "https://api.deepseek.com/anthropic";
   const model = process.env.DEEPSEEK_AGENT_MODEL?.trim() || process.env.DEEPSEEK_MODEL?.trim() || "deepseek-chat";
   // Only what the CLI needs: no tokens from the job leak into the agent's shell.
@@ -156,16 +171,29 @@ function runAgent(prompt) {
     "dontAsk",
     "--tools",
     "Read,Grep,Glob,Edit,Write,Bash",
+    ...(capture ? ["--output-format", "json"] : []),
     "--allowedTools",
-    ...ALLOWED_TOOLS,
+    ...allowedTools,
   ];
   const result = spawnSync(process.env.CLAUDE_BIN || "claude", args, {
     cwd: ROOT,
     env,
-    stdio: ["ignore", "inherit", "inherit"],
+    stdio: ["ignore", capture ? "pipe" : "inherit", "inherit"],
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
     timeout: AGENT_TIMEOUT_MS,
   });
-  if (result.error) console.log(`::warning::Agent 没有正常结束:${result.error.message}`);
+  if (result.error || result.status !== 0) {
+    console.log(`::warning::Agent 没有正常结束:${result.error?.message ?? `退出码 ${result.status}`}`);
+    return null;
+  }
+  if (!capture) return null;
+  try {
+    return String(JSON.parse(result.stdout).result ?? "");
+  } catch {
+    console.log(`::warning::读不懂 Agent 的输出:${tail(result.stdout, 2000)}`);
+    return null;
+  }
 }
 
 /** Puts zh/ and apps/ back to `snapshot` (a commit holding the pre-agent working tree). */
@@ -182,6 +210,10 @@ function judge(snapshot) {
   if (files.length === 0) return "nothing was changed";
   const reason = rejectReason(files, git("diff", "--cached", "-U0", snapshot, "--", "apps"));
   if (reason) return reason;
+  const surface = require("./telemetry-surface.cjs");
+  const before = JSON.parse(git("show", `${snapshot}:zh/telemetry-surface.json`));
+  const dropped = surface.droppedFiles(before, surface.readBaseline());
+  if (dropped.length) return `files still upstream were dropped from zh/telemetry-surface.json: ${dropped.join(", ")}`;
   const apply = runApply();
   if (!apply.ok) return `node zh/apply.cjs still fails:\n${tail(apply.output, 3000)}`;
   const tests = runTests();
@@ -209,14 +241,13 @@ function main() {
   const snapshot = git("stash", "create").trim() || git("rev-parse", "HEAD").trim();
 
   let fixed = false;
-  const protocol = process.env.DEEPSEEK_PROTOCOL?.trim() || "anthropic";
-  if (!process.env.DEEPSEEK_API_KEY) console.log("::warning::没有 DEEPSEEK_API_KEY,跳过 Agent 修复。");
-  else if (protocol !== "anthropic") console.log(`::warning::Agent 需要 Anthropic 协议,DEEPSEEK_PROTOCOL=${protocol},跳过。`);
+  const unavailable = agentUnavailable();
+  if (unavailable) console.log(`::warning::${unavailable},跳过 Agent 修复。`);
   else {
     let feedback = "";
     for (let attempt = 1; attempt <= ATTEMPTS && !fixed; attempt++) {
       console.log(`::group::Agent 第 ${attempt} 次`);
-      runAgent(agentPrompt({ tag, previous, failures, hooks: missingHooks(), feedback }));
+      runClaude(agentPrompt({ tag, previous, failures, hooks: missingHooks(), feedback }), ALLOWED_TOOLS);
       console.log("::endgroup::");
       feedback = judge(snapshot) ?? "";
       if (feedback) {
@@ -260,4 +291,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { rejectReason, failingTests, missingHooks, PROTECTED };
+module.exports = { rejectReason, failingTests, missingHooks, agentUnavailable, runClaude, summary, tail, git, PROTECTED };

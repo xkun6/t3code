@@ -190,6 +190,19 @@ jobs:
           set -o pipefail
           node --test "zh/*.test.cjs" 2>&1 | tee "$RUNNER_TEMP/tests.log"
 
+      # 修复 Agent 和遥测审查共用。装不上不在这里失败:修复 Agent 照样降级发布,遥测审查会拦下本版。
+      - id: claude
+        name: 安装 Claude Code
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          prefix="$RUNNER_TEMP/claude"
+          echo "bin=$prefix/bin/claude" >> "$GITHUB_OUTPUT"
+          # npm 12 默认不跑依赖的 install 脚本,Claude Code 的原生程序要靠它的 install.cjs 放到位。
+          npm install -g --prefix "$prefix" --no-audit --no-fund @anthropic-ai/claude-code@2.1.318
+          node "$prefix/lib/node_modules/@anthropic-ai/claude-code/install.cjs"
+          "$prefix/bin/claude" --version
+
       # 上游改了挂入点附近的代码:Agent 读代码修 zh/,过了 apply.cjs 和全部单测才保留,否则撤销;
       # 构建配置挂入点仍缺、或遥测没关上(zh/telemetry.test.cjs)就失败不发版,只缺对话翻译 / Reclaude 这类挂入点就降级发布。
       # 上游改了遥测相关文件也会走到这里:Agent 审查 diff,确认仍然全关后才更新指纹基线。见 zh/agent-repair.cjs。
@@ -200,13 +213,6 @@ jobs:
         # 装不上 Claude Code 或拉不到上游标签都不算失败:Agent 起不来,agent-repair.cjs 照样降级发布(遥测没关上时除外)。
         run: |
           set +e -uo pipefail
-          prefix="$RUNNER_TEMP/claude"
-          # npm 12 默认不跑依赖的 install 脚本,Claude Code 的原生程序要靠它的 install.cjs 放到位。
-          if ! { npm install -g --prefix "$prefix" --no-audit --no-fund @anthropic-ai/claude-code@2.1.318 \
-            && node "$prefix/lib/node_modules/@anthropic-ai/claude-code/install.cjs" \
-            && "$prefix/bin/claude" --version; }; then
-            echo "::warning::Claude Code 安装失败,Agent 不会运行。"
-          fi
           previous="$(git ls-remote --tags --refs "$UPSTREAM_REPO" 'v*' | sed 's|.*refs/tags/||' \
             | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | grep -B1 -x "$TAG" | head -n 1)"
           if [[ -z "$previous" ]] || ! git fetch -q --no-tags --filter=blob:none "$UPSTREAM_REPO" \
@@ -214,7 +220,7 @@ jobs:
             echo "::warning::拉不到上游的上一个版本标签,Agent 看不到上游改了什么。"
             previous="${previous:-$TAG}"
           fi
-          CLAUDE_BIN="$prefix/bin/claude" \
+          CLAUDE_BIN="${{ steps.claude.outputs.bin }}" \
             node zh/agent-repair.cjs "$TAG" "$previous" "$RUNNER_TEMP/apply.log" "$RUNNER_TEMP/tests.log"
 
       # 标记步骤:dsh-bot 看到它们执行了就在通知里提醒。
@@ -235,7 +241,25 @@ jobs:
         name: 翻译新增文案
         run: node zh/translate.cjs
 
-      # 翻译失败也先把合并和已翻译的部分推上去,下次只补剩下的。
+      # 指纹只认得已知的名字。zh/TELEMETRY_AUDITED 之后的每个上游版本,再由只读 Agent 判断新增的联网代码
+      # 有没有新的外发。发现默认开着的,或审查跑不起来,本版都不发布;合并照样推上去,下次运行重新审查。
+      # 见 zh/telemetry-audit.cjs。
+      - id: audit
+        name: 遥测审查
+        if: always() && (steps.agent.outcome == 'success' || (steps.apply.outcome == 'success' && steps.tests.outcome == 'success'))
+        timeout-minutes: 60
+        env:
+          CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
+        run: |
+          set -euo pipefail
+          base="$(tr -d '[:space:]' < zh/TELEMETRY_AUDITED)"
+          if [[ "$base" != "$TAG" ]]; then
+            git fetch -q --no-tags --filter=blob:none "$UPSTREAM_REPO" \
+              "refs/tags/$base:refs/tags/$base" "refs/tags/$TAG:refs/tags/$TAG"
+          fi
+          node zh/telemetry-audit.cjs "$TAG"
+
+      # 翻译失败、遥测审查没过,也先把合并和已翻译的部分推上去,下次只补剩下的。
       - id: push
         name: 提交并推送
         if: always() && (steps.agent.outcome == 'success' || (steps.apply.outcome == 'success' && steps.tests.outcome == 'success'))
@@ -244,7 +268,7 @@ jobs:
           PUSH_TOKEN: ${{ secrets.ZH_PUSH_TOKEN || github.token }}
         run: |
           set -euo pipefail
-          git add -A -- apps zh/locales
+          git add -A -- apps zh/locales zh/telemetry-surface.json zh/TELEMETRY_AUDITED
           if ! git diff --cached --quiet; then
             git commit -q -m "chore(zh): 翻译 $TAG 新增文案,校验挂入点"
           fi
@@ -304,6 +328,7 @@ jobs:
         run: |
           set -uo pipefail
           check() { grep -lq "$2" $1 || { echo "::error::$3"; failed=1; }; }
+          absent() { if grep -lq "$2" $1; then echo "::error::$3"; failed=1; fi; }
           feature() { if [[ -n "$DEGRADED" ]]; then grep -lq "$2" $1 || echo "::warning::$3(降级发布)"; else check "$@"; fi; }
           failed=0
           feature 'apps/server/dist/*.mjs' 'isReclaudeClaude' "服务端产物缺少 Reclaude 挂入点"
@@ -311,8 +336,13 @@ jobs:
           feature 'apps/web/dist/assets/*.js' 'server.zhTranslation' "网页产物缺少对话翻译界面"
           check 'apps/web/dist/assets/*.js' '设置' "网页产物没有汉化"
           # 遥测关闭从不降级:没关上就不发版。
-          check 'apps/server/dist/*.mjs' 'T3CODE_ZH_TELEMETRY_OFF' "服务端产物没有关闭遥测"
-          if grep -lq 'ingest\.t3\.codes' apps/server/dist/*.mjs; then echo "::error::服务端产物仍含遥测地址 ingest.t3.codes"; failed=1; fi
+          check 'apps/server/dist/*.mjs' 'T3CODE_ZH_TELEMETRY_OFF:analytics' "服务端产物没有关闭产品分析"
+          check 'apps/server/dist/*.mjs' 'T3CODE_ZH_TELEMETRY_OFF:relay' "服务端产物没有关闭中继追踪"
+          check 'apps/web/dist/assets/*.js' 'T3CODE_ZH_TELEMETRY_OFF:relay' "网页产物没有关闭中继追踪"
+          for files in 'apps/server/dist/*.mjs' 'apps/web/dist/assets/*.js'; do
+            absent "$files" 'ingest\.t3\.codes' "产物仍含遥测地址 ingest.t3.codes:$files"
+            absent "$files" 'api\.axiom\.co' "产物仍含追踪地址 api.axiom.co:$files"
+          done
           exit $failed
 
       - name: 安装 Rust

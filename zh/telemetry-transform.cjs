@@ -8,8 +8,10 @@
 const path = require("node:path");
 const MagicString = require("magic-string").default;
 
-// Survives minification, so the workflow can grep the server bundle for it.
+// Runtime strings, so they survive minification: the workflow greps the bundles for them.
 const MARKER = "T3CODE_ZH_TELEMETRY_OFF";
+const ANALYTICS_MARKER = `${MARKER}:analytics`;
+const RELAY_MARKER = `${MARKER}:relay`;
 
 /** Relative path → hooks. Each hook's anchor must match exactly once. */
 const HOOKS = {
@@ -17,7 +19,7 @@ const HOOKS = {
     {
       name: "enabled",
       anchor: /enabled: Config\.Boolean\("T3CODE_TELEMETRY_ENABLED"\)\.pipe\(Config\.withDefault\(true\)\),/g,
-      replace: () => `enabled: Config.Boolean("${MARKER}").pipe(Config.withDefault(false), Config.map(() => false)),`,
+      replace: () => `enabled: Config.succeed(false),\n  zhTelemetryOff: Config.succeed("${ANALYTICS_MARKER}"),`,
     },
     {
       // Second line of defence: no host, and no env var can set one.
@@ -38,7 +40,8 @@ const HOOKS = {
     {
       name: "layer",
       anchor: /^(\s*)if \(config === null\) \{\r?\n\s*return Layer\.succeed\(RelayClientTracer, Option\.none\(\)\);/gm,
-      replace: (match, indent) => `${indent}config = null;\n${match}`,
+      replace: (match, indent) =>
+        `${indent}config = null;\n${indent}Reflect.set(globalThis, "${RELAY_MARKER}", true);\n${match}`,
     },
   ],
   "apps/mobile/src/features/observability/observe.ts": [
@@ -93,4 +96,4 @@ function missingTelemetryHooks(root) {
   });
 }
 
-module.exports = { MARKER, TARGET_FILES, transformTelemetryWithMap, missingTelemetryHooks };
+module.exports = { MARKER, ANALYTICS_MARKER, RELAY_MARKER, TARGET_FILES, transformTelemetryWithMap, missingTelemetryHooks };

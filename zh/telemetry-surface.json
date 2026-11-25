@@ -9,6 +9,7 @@
   "apps/server/src/cloud/publicConfig.ts": "9b0f914f568d03a1",
   "apps/server/src/http.ts": "62a6194b978946e9",
   "apps/server/src/observability/Observability.ts": "3a60b57ba86c8da2",
+  "apps/server/src/observability/OtlpExportFailures.ts": "50111c8d9ff7e57e",
   "apps/server/src/provider/claudeResetCredits.ts": "2a1d7c7ec8f59217",
   "apps/server/src/provider/Drivers/ClaudeSkills.ts": "e92e70a005bb1120",
   "apps/server/src/serverLogger.ts": "de8f060421583160",

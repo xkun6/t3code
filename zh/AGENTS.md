@@ -5,11 +5,11 @@
 ## 结构
 
 - `zh/`:中文化覆盖层(界面翻译、Reclaude/Recodex 兼容、对话翻译、关闭遥测)。只有我们改,合并永远不会在这里冲突。
-- `zh/telemetry-transform.cjs`:构建时关掉上游的所有遥测(产品分析、读取 Codex/Claude 登录文件、中继追踪、手机崩溃报告)。锚点对不上就抛错让构建失败,从不降级。`zh/telemetry-surface.json` 是审查过的上游遥测相关文件指纹,上游改了其中任何文件,`zh/telemetry.test.cjs` 就失败,要先审 diff、确认变换仍然全关,再 `node zh/telemetry-surface.cjs --write`。
+- `zh/telemetry-transform.cjs`:构建时关掉上游的所有遥测(产品分析、读取 Codex/Claude 登录文件、中继追踪、手机崩溃报告)。锚点对不上就抛错让构建失败,从不降级。`zh/telemetry-surface.json` 是审查过的上游遥测相关文件指纹,上游改了其中任何文件,`zh/telemetry.test.cjs` 就失败,要先审 diff、确认变换仍然全关,再 `node zh/telemetry-surface.cjs --write`。指纹靠关键词找文件,上游改了名字就看不见,所以 `zh/telemetry-audit.cjs` 每个上游版本再让只读 Agent 判断新增的联网代码(`fetch`、`HttpClient`、URL、读 home 目录、新依赖等改名绕不开的写法):默认开着的外发或判断不了的就不发版,认定的遥测文件加进基线,之后不管叫什么名字都跟踪。`zh/TELEMETRY_AUDITED` 是最后一个审查通过的上游标签。
 - 上游文件里只有少量挂入点。清单以 `zh/apply.cjs` 的 `EDITS` / `NATIVE_EDITS` 为准。
 - `zh/UPSTREAM`:已合并的上游标签,流水线靠它判断要不要合并。
 - `zh/merge-upstream.cjs`:合并上游标签,并让 AI 解决冲突。
-- `zh/agent-repair.cjs`:合并后挂入点或覆盖层单测失败时,让流水线里的 Agent(Claude Code CLI + DeepSeek)修 `zh/`。过了 `apply.cjs` 和全部单测才保留;对话翻译、Reclaude 这类挂入点仍缺就降级发布,构建配置挂入点仍缺、或 `zh/telemetry.test.cjs` 没过就失败,不发版。它不许改 `zh/*.test.cjs`:单测是验收标准,改单测要人来。
+- `zh/agent-repair.cjs`:合并后挂入点或覆盖层单测失败时,让流水线里的 Agent(Claude Code CLI + DeepSeek)修 `zh/`。过了 `apply.cjs` 和全部单测才保留;对话翻译、Reclaude 这类挂入点仍缺就降级发布,构建配置挂入点仍缺、或 `zh/telemetry.test.cjs` 没过就失败,不发版。它不许改 `zh/*.test.cjs`、`zh/telemetry-surface.cjs`、`zh/telemetry-audit.cjs`、`zh/TELEMETRY_AUDITED`,也不许从指纹基线里删掉还存在的文件:这些是验收标准,改它们要人来。
 - 使用说明和 secrets 清单在 `zh/README.md`,翻译规则在 `zh/TRANSLATION_GUIDE.md`(它同时是发给 DeepSeek 的提示词)。
 
 ## 改 `zh/` 以外的文件(上游文件)

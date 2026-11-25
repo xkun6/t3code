@@ -16,6 +16,9 @@ test("the agent may change zh/ and only marked lines of upstream files, never th
   const rejected = [
     [["zh/translation.test.cjs"], "", /must not be changed/],
     [["zh/agent-repair.cjs"], "", /must not be changed/],
+    [["zh/telemetry-surface.cjs"], "", /must not be changed/],
+    [["zh/telemetry-audit.cjs"], "", /must not be changed/],
+    [["zh/TELEMETRY_AUDITED"], "", /must not be changed/],
     [["zh/UPSTREAM"], "", /must not be changed/],
     [["zh/locales/zh-Hans.json"], "", /must not be changed/],
     [["zh/package-lock.json"], "", /must not be changed/],
