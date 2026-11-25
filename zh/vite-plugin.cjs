@@ -1,13 +1,12 @@
 // Vite / Rolldown plugins:
-// - zhLocalePlugin: localizes UI sources before React and the compiler see them, and wires the
-//   conversation-translation UI into the web app.
+// - zhLocalePlugin: turns off upstream telemetry and wires the conversation-translation UI into the
+//   web app. The UI itself uses upstream's own zh catalog.
 // - zhServerPlugin: wires Reclaude (`rec`) / Recodex (`recx`) support and conversation translation
 //   into server bundles.
 "use strict";
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { localizeWithMap, isEnabled } = require("./localize.cjs");
 const {
   RUNTIME_SPECIFIER,
   isReclaudeEnabled,
@@ -41,16 +40,10 @@ function zhLocalePlugin() {
     },
     transform(code, id) {
       const file = id.split("?")[0];
-      // Telemetry targets are disjoint from the others and never localized.
+      // Telemetry targets are disjoint from the translation targets.
       const telemetry = transformTelemetryWithMap(code, file);
       if (telemetry) return telemetry;
       const translated = translation.transformTranslationWebWithMap(code, file);
-      const source = translated?.map ? translated.code : code;
-      const localized = isEnabled() ? localizeWithMap(source, file) : null;
-      if (localized !== null) {
-        // Both steps edit the same file only for the few translation targets; their maps are not chained.
-        return { code: localized.code, map: translated?.map ? null : localized.map };
-      }
       return translated?.map ? { code: translated.code, map: translated.map } : null;
     },
   };

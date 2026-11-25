@@ -260,7 +260,6 @@ test("apply.cjs is idempotent on all config targets and satisfies repair.cjs add
     "apps/server/src/bin.ts",
     "apps/mobile/metro.config.js",
     "apps/mobile/app.config.ts",
-    "apps/mobile/modules/t3-native-controls/android/src/main/java/expo/modules/t3nativecontrols/T3WorkspaceNavigationModule.kt",
   ];
 
   try {
@@ -285,13 +284,11 @@ test("apply.cjs is idempotent on all config targets and satisfies repair.cjs add
       const next = fs.readFileSync(path.join(sandbox, rel), "utf8");
       afterFirst.set(rel, next);
       assert.ok(next.includes("t3code-zh-overlay"), `${rel} missing overlay marker`);
-      if (rel !== patchedFiles[5]) {
-        assert.equal(
-          repairRejectReason(originals.get(rel), next, "t3code-zh-overlay"),
-          null,
-          `${rel} violated repair.cjs additive-only rule`,
-        );
-      }
+      assert.equal(
+        repairRejectReason(originals.get(rel), next, "t3code-zh-overlay"),
+        null,
+        `${rel} violated repair.cjs additive-only rule`,
+      );
     }
 
     // Bundling bin.ts strips the dev-only server-dev-hook line so packaged builds stay self-contained.

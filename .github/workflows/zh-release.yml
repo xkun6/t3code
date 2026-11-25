@@ -1,12 +1,12 @@
 name: 中文版构建
 
 # zh 分支 = 上游 pingdotgg/t3code 的稳定版 + 中文化提交。每小时检查上游最新稳定版标签(vX.Y.Z):
-# 比 zh/UPSTREAM 记录的新 → 合并进 zh(冲突交给 AI 按块解决)→ DeepSeek 翻译新增文案 → 推回 zh
+# 比 zh/UPSTREAM 记录的新 → 合并进 zh(冲突交给 AI 按块解决)→ 推回 zh
 # → 构建 Windows 安装包和 Android APK → 发布到本仓库的 Releases(桌面端自动更新读的就是这里)。
 # dsh-bot 的 t3code 插件轮询这个 workflow 的运行结果发通知,也可以用 workflow_dispatch 立即触发。
 #
 # 安全:只有 schedule / workflow_dispatch 触发。DeepSeek 密钥只交给 prepare 任务里本仓库自己的脚本
-# (merge-upstream / repair / translate / agent-repair),那个任务只做 git 合并和解析源码,不安装、不执行上游代码;
+# (merge-upstream / repair / agent-repair),那个任务只做 git 合并和解析源码,不安装、不执行上游代码;
 # 唯一装的外部工具是固定版本的 Claude Code CLI(修复 Agent),它的工具和命令有白名单,拿不到推送令牌。
 # 构建任务拿不到密钥。
 
@@ -101,7 +101,7 @@ jobs:
 
   prepare:
     # dsh-bot 从任务名里读版本号。
-    name: 合并上游 ${{ needs.check.outputs.tag }} 并翻译
+    name: 合并上游 ${{ needs.check.outputs.tag }}
     needs: check
     if: needs.check.outputs.build == 'true'
     runs-on: ubuntu-latest
@@ -234,13 +234,6 @@ jobs:
           DEGRADED: ${{ steps.agent.outputs.degraded }}
         run: echo "::warning::这些挂入点本版不生效:$DEGRADED"
 
-      - name: 提取文案
-        run: node zh/extract.cjs --stats
-
-      - id: translate
-        name: 翻译新增文案
-        run: node zh/translate.cjs
-
       # 指纹只认得已知的名字。zh/TELEMETRY_AUDITED 之后的每个上游版本,再由只读 Agent 判断新增的联网代码
       # 有没有新的外发。发现默认开着的,或审查跑不起来,本版都不发布;合并照样推上去,下次运行重新审查。
       # 见 zh/telemetry-audit.cjs。
@@ -259,7 +252,7 @@ jobs:
           fi
           node zh/telemetry-audit.cjs "$TAG"
 
-      # 翻译失败、遥测审查没过,也先把合并和已翻译的部分推上去,下次只补剩下的。
+      # 遥测审查没过,也先把合并推上去,下次运行重新审查。
       - id: push
         name: 提交并推送
         if: always() && (steps.agent.outcome == 'success' || (steps.apply.outcome == 'success' && steps.tests.outcome == 'success'))
@@ -268,9 +261,9 @@ jobs:
           PUSH_TOKEN: ${{ secrets.ZH_PUSH_TOKEN || github.token }}
         run: |
           set -euo pipefail
-          git add -A -- apps zh/locales zh/telemetry-surface.json zh/TELEMETRY_AUDITED
+          git add -A -- apps zh/telemetry-surface.json zh/TELEMETRY_AUDITED
           if ! git diff --cached --quiet; then
-            git commit -q -m "chore(zh): 翻译 $TAG 新增文案,校验挂入点"
+            git commit -q -m "chore(zh): $TAG 校验挂入点"
           fi
           git push -q "https://x-access-token:${PUSH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:$BRANCH"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
@@ -282,7 +275,6 @@ jobs:
     timeout-minutes: 90
     env:
       VERSION: ${{ needs.check.outputs.version }}
-      T3CODE_LOCALE: zh-Hans
       # 桌面端自动更新读本仓库的 Releases。
       T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
     steps:
@@ -321,7 +313,7 @@ jobs:
         run: vp run build:desktop:bundle
 
       # 上游配置把覆盖层插件顶掉时构建照样成功,这里确认挂入点真的进了产物。
-      # 降级发布时缺的挂入点已经在 prepare 里报过,这里只警告;没汉化永远不发布。
+      # 降级发布时缺的挂入点已经在 prepare 里报过,这里只警告。
       - name: 校验覆盖层已打包
         env:
           DEGRADED: ${{ needs.prepare.outputs.degraded }}
@@ -334,7 +326,6 @@ jobs:
           feature 'apps/server/dist/*.mjs' 'isReclaudeClaude' "服务端产物缺少 Reclaude 挂入点"
           feature 'apps/server/dist/*.mjs' 'server.zhTranslation' "服务端产物缺少对话翻译 RPC"
           feature 'apps/web/dist/assets/*.js' 'server.zhTranslation' "网页产物缺少对话翻译界面"
-          check 'apps/web/dist/assets/*.js' '设置' "网页产物没有汉化"
           # 遥测关闭从不降级:没关上就不发版。
           check 'apps/server/dist/*.mjs' 'T3CODE_ZH_TELEMETRY_OFF:analytics' "服务端产物没有关闭产品分析"
           check 'apps/server/dist/*.mjs' 'T3CODE_ZH_TELEMETRY_OFF:relay' "服务端产物没有关闭中继追踪"
@@ -383,9 +374,8 @@ jobs:
     timeout-minutes: 120
     env:
       VERSION: ${{ needs.check.outputs.version }}
-      T3CODE_LOCALE: zh-Hans
       APP_VARIANT: production
-      # 关掉官方 EAS 热更新,否则官方 OTA 会把中文包替换回英文。
+      # 关掉官方 EAS 热更新,否则官方 OTA 会换掉关了遥测、带对话翻译的包。
       T3CODE_MOBILE_UPDATES_ENABLED: "0"
       EXPO_NO_GIT_STATUS: "1"
     steps:
@@ -481,7 +471,7 @@ jobs:
           set -euo pipefail
           ls -l dist
           files=(dist/*.exe dist/*.blockmap dist/latest.yml dist/*.apk)
-          notes="基于上游 [$TAG](https://github.com/pingdotgg/t3code/releases/tag/$TAG) 合并构建(zh 分支 ${SHA:0:10}),界面文案由 DeepSeek 翻译。Windows 安装包未签名,不含 WSL 后端。${DEGRADED:+ 本版降级发布,这些挂入点不生效:$DEGRADED。}"
+          notes="基于上游 [$TAG](https://github.com/pingdotgg/t3code/releases/tag/$TAG) 合并构建(zh 分支 ${SHA:0:10}),界面中文用上游自带的翻译(设置 → 语言 选中文)。Windows 安装包未签名,不含 WSL 后端。${DEGRADED:+ 本版降级发布,这些挂入点不生效:$DEGRADED。}"
           if draft="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft 2>/dev/null)"; then
             gh release upload "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
             # 重建:标签和说明跟着这次的提交走,否则 Release 页面、源码包还停在第一次构建。GITHUB_TOKEN 没有

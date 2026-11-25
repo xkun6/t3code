@@ -20,7 +20,6 @@ test("the agent may change zh/ and only marked lines of upstream files, never th
     [["zh/telemetry-audit.cjs"], "", /must not be changed/],
     [["zh/TELEMETRY_AUDITED"], "", /must not be changed/],
     [["zh/UPSTREAM"], "", /must not be changed/],
-    [["zh/locales/zh-Hans.json"], "", /must not be changed/],
     [["zh/package-lock.json"], "", /must not be changed/],
     [[".github/workflows/zh-release.yml"], "", /outside zh\/ and apps\//],
     [["packages/shared/src/x.ts"], "", /outside zh\/ and apps\//],

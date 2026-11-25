@@ -28,7 +28,6 @@ const PROTECTED = [
   /^zh\/telemetry-(surface|audit)\.cjs$/,
   /^zh\/TELEMETRY_AUDITED$/,
   /^zh\/UPSTREAM$/,
-  /^zh\/locales\//,
   /^zh\/package(-lock)?\.json$/,
 ];
 const ALLOWED_TOOLS = [
@@ -117,9 +116,9 @@ Read zh/AGENTS.md first: it explains the overlay and the rules for touching upst
 
 How to work:
 - See what upstream changed with \`git diff ${previous} ${tag} -- <file>\` for the files named below.
-- Fix the overlay in zh/: the build-time transforms (zh/translation-transform.cjs, zh/reclaude-transform.cjs, zh/localize.cjs) and the anchors in zh/apply.cjs. Follow upstream's new code and keep every hook doing the same job as before.
+- Fix the overlay in zh/: the build-time transforms (zh/translation-transform.cjs, zh/reclaude-transform.cjs, zh/telemetry-transform.cjs) and the anchors in zh/apply.cjs. Follow upstream's new code and keep every hook doing the same job as before.
 - In upstream files (apps/...) you may only add or change lines that carry the comment \`${MARK}\`.
-- Do not edit zh/*.test.cjs, zh/agent-repair.cjs, zh/UPSTREAM, zh/locales/ or zh/package*.json. The tests are the acceptance check; if one is wrong for the new upstream, say why and stop.
+- Do not edit zh/*.test.cjs, zh/agent-repair.cjs, zh/UPSTREAM or zh/package*.json. The tests are the acceptance check; if one is wrong for the new upstream, say why and stop.
 - Telemetry stays off. zh/telemetry-transform.cjs switches off everything upstream sends home (analytics, relay traces, mobile crash reports); zh/telemetry-surface.json fingerprints every upstream file that could send it. If zh/telemetry.test.cjs fails, run \`node zh/telemetry-surface.cjs\` and read \`git diff ${previous} ${tag} -- <file>\` for each file it lists. Anything that could now send data (a new endpoint, exporter, beacon, or a moved switch) must be switched off in zh/telemetry-transform.cjs. Only then run \`node zh/telemetry-surface.cjs --write\`. Never weaken a telemetry hook to make a test pass.
 - Check with \`node zh/apply.cjs\` (must exit 0) and \`node --test ${TESTS}\` (must pass). Repeat until both pass.
 - Do not commit; the pipeline reviews and commits your change.

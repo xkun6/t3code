@@ -424,17 +424,17 @@ class T3WorkspaceNavigationView(
     }
   }
 
-  private fun tabTitle(tab: String) = tabTitles[tab] ?: when (tab) { // t3code-zh-overlay
-    "threads" -> "对话"
-    "pullRequests" -> "PR"
-    "issues" -> "Issue"
-    "workflows" -> "工作流"
-    "usage" -> "用量"
-    else -> "设置"
+  private fun tabTitle(tab: String) = tabTitles[tab] ?: when (tab) {
+    "threads" -> "Chats"
+    "pullRequests" -> "Pulls"
+    "issues" -> "Issues"
+    "workflows" -> "Workflows"
+    "usage" -> "Usage"
+    else -> "Settings"
   }
 
-  private fun expandedTabTitle(tab: String) = // t3code-zh-overlay
-    expandedTabTitles[tab] ?: if (tab == "pullRequests") "PR" else tabTitle(tab)
+  private fun expandedTabTitle(tab: String) =
+    expandedTabTitles[tab] ?: if (tab == "pullRequests") "Pull requests" else tabTitle(tab)
 
   @Composable
   private fun tabIconPainter(tab: String) = painterResource(

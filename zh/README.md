@@ -3,10 +3,10 @@
 `zh` 分支是上游 [pingdotgg/t3code](https://github.com/pingdotgg/t3code) 的 fork:上游稳定版 + 中文化提交。
 
 - `zh/UPSTREAM`:已经合并进来的上游标签。
-- `.github/workflows/zh-release.yml`:每小时检查上游最新稳定版(`vX.Y.Z` 标签),比 `zh/UPSTREAM` 新就合并进 `zh`、翻译新增文案、构建、发布。上游自己的 workflow 在本分支里都删掉了,合并时也会自动丢弃,只跑这一个。
+- `.github/workflows/zh-release.yml`:每小时检查上游最新稳定版(`vX.Y.Z` 标签),比 `zh/UPSTREAM` 新就合并进 `zh`、构建、发布。上游自己的 workflow 在本分支里都删掉了,合并时也会自动丢弃,只跑这一个。
 - dsh-bot 的 t3code 插件(另一个仓库 `dsh-t3code`)轮询这个 workflow,把开始、完成、失败发给你,也能用 `/t3 构建` 立即触发。
-- `zh/`:中文化与增强覆盖层。不改上游业务源码,只在构建/入口配置里各有一两行带 `t3code-zh-overlay` 标记的正式提交(Web、桌面端、服务端的 Vite 配置,服务端开发入口,移动端的 Metro 配置,安卓原生底部栏):
-  - 构建时把界面里的英文字符串替换成 `zh/locales/zh-Hans.json` 里的翻译。
+- `zh/`:中文化与增强覆盖层。不改上游业务源码,只在构建/入口配置里各有一两行带 `t3code-zh-overlay` 标记的正式提交(Web、桌面端、服务端的 Vite 配置,服务端开发入口,移动端的 Metro 配置):
+  - 界面中文直接用上游自带的翻译,在 **设置 → 语言** 里选中文(默认跟上游一样是英文)。覆盖层不再自己翻译界面。
   - 服务端兼容 Reclaude(`rec` / `reclaude`)与 Recodex(`recx` / `recodex`)封装 CLI:在 **设置 → 提供商 → Claude / Codex → 二进制路径** 填入 `rec`(`rec.exe`)或 `recx`(`recx.exe`)即可直接使用,自动透传 `cli` 子命令与前置 `--org <id>` 参数、对齐 `~/.rec` 当前组织绑定的配置/会话目录,并在未登录时快速提示运行 `rec login` / `recx login` 而不挂起后台探测。
   - 对话翻译:用自己的语言和 Agent 对话,Agent 的上下文里只有 Agent 语言。见下文「对话翻译」。
 
@@ -31,22 +31,20 @@
 
    生成 keystore:`keytool -genkeypair -v -keystore release.keystore -alias t3code -keyalg RSA -keysize 2048 -validity 36500`,再 `base64 -w0 release.keystore` 填进 `ANDROID_KEYSTORE_BASE64`。**一旦用了就别换**,换签名后手机上只能卸载重装。
 
-4. **Actions → 中文版构建 → Run workflow** 手动跑第一次。第一次要翻译全部约 6700 条文案,DeepSeek 费用大约几块钱人民币;以后每个新版本只翻译新增的文案。
+4. **Actions → 中文版构建 → Run workflow** 手动跑第一次。
 
 ## 安装
 
 - **Windows**:从 Releases 下载 `T3-Code-<版本>-x64.exe`。安装包没有签名,SmartScreen 提示时选“仍要运行”。装好后桌面端的自动更新读的是本仓库的 Releases,不会被官方英文版覆盖。不包含 WSL 后端。
-- **Android**:下载 `t3code-zh-<版本>-android-arm64.apk`。包名和官方版相同而签名不同,装过官方版要先卸载。想自动更新可以用 [Obtainium](https://github.com/ImranR98/Obtainium) 跟踪本仓库的 Releases。这个 APK 关掉了官方 OTA 热更新,否则官方推送会把界面换回英文。
+- **Android**:下载 `t3code-zh-<版本>-android-arm64.apk`。包名和官方版相同而签名不同,装过官方版要先卸载。想自动更新可以用 [Obtainium](https://github.com/ImranR98/Obtainium) 跟踪本仓库的 Releases。这个 APK 关掉了官方 OTA 热更新,否则官方推送会换掉关了遥测、带对话翻译的包。
 
 ## 日常
 
-- **改翻译**:直接编辑 `zh/locales/zh-Hans.json` 提交。下一个版本自动生效;想立刻重建当前版本,手动运行流水线并勾选“Release 已存在时也重新构建”。不过同版本号的重建不会触发桌面端自动更新,要手动下载安装。
 - **改中文化代码**:直接在 `zh` 分支上改、提交、推送。改上游文件时新增的行加 `// t3code-zh-overlay` 注释,合并冲突时 AI 靠它认出哪些是我们的改动。
 - **合并上游**:`zh/merge-upstream.cjs` 合并标签。上游 workflow 文件直接丢弃;其他冲突按冲突块交给 DeepSeek,解决结果里不能有冲突标记,也不能少了我们这边带标记的行,否则重试三次后放弃合并、什么都不推。AI 解决过的文件列在合并提交的说明里,运行摘要和 bot 通知也会提醒,建议看一眼。删改冲突、二进制冲突、超大文件只能手动:本地 `git merge vX.Y.Z` 解决后推到 `zh`(记得把 `zh/UPSTREAM` 改成新标签),下一次定时任务就会构建。
 - **失败重试**:定时任务不会在同一个提交上重复跑已经失败的构建;推一个新提交,或手动运行(bot 里 `/t3 构建`)才会再试。
-- **翻译规则和术语表**:`zh/TRANSLATION_GUIDE.md`,它同时是发给 DeepSeek 的系统提示词。
 - **挂入点丢失**:合并后 `zh/apply.cjs` 会检查每个挂入点的标记还在不在;丢了就按锚点补回,锚点也没了才让 DeepSeek 只新增带标记的行。用了 AI 修复时运行摘要里会有 diff。
-- **上游改动弄坏覆盖层**:挂入点还缺,或覆盖层单测没过,流水线会让 Agent(Claude Code CLI + DeepSeek)读代码修 `zh/`,最多两次。改动只在 `apply.cjs` 和全部单测都通过、没碰单测文件、上游文件里只改了带标记的行时才保留,单独成一个提交,bot 通知会提醒检查。修不好时:缺的是对话翻译、Reclaude 这类挂入点就**降级发布**(界面照样汉化,这些功能本版不生效,通知和 Release 说明里列出来),缺的是构建配置挂入点就失败。降级的挂入点修好后推到 `zh`,发 `/t3 构建 重建`。
+- **上游改动弄坏覆盖层**:挂入点还缺,或覆盖层单测没过,流水线会让 Agent(Claude Code CLI + DeepSeek)读代码修 `zh/`,最多两次。改动只在 `apply.cjs` 和全部单测都通过、没碰单测文件、上游文件里只改了带标记的行时才保留,单独成一个提交,bot 通知会提醒检查。修不好时:缺的是对话翻译、Reclaude 这类挂入点就**降级发布**(这些功能本版不生效,通知和 Release 说明里列出来),缺的是构建配置挂入点就失败。降级的挂入点修好后推到 `zh`,发 `/t3 构建 重建`。
 - **遥测**:构建时关掉上游发回的一切:产品分析(PostHog,`ingest.t3.codes`)、为此读取 `~/.codex/auth.json` 和 `~/.claude.json`、中继追踪(Axiom)、手机端崩溃报告。上游每次改动遥测相关的文件,Agent 都会先审查 diff、确认仍然全关才继续,所以几乎每个版本的通知里都会有「AI 修复了覆盖层」,建议看一眼它的 diff。修不好就**不发版**,不会降级。此外每个上游版本还有一步「遥测审查」:不看关键词,而是把上游新增的联网代码(`fetch`、`HttpClient`、URL、读 home 目录、新依赖)交给只读 Agent 逐条判断,发现默认开着的外发、或者 Agent 判断不了、或者审查本身跑不起来,本版都不发布,步骤摘要里列出是哪些代码;在 `zh/telemetry-transform.cjs` 里关掉后手动运行流水线即可重审。构建产物还会检查服务端和网页都带着关闭标记,且没有 `ingest.t3.codes`、`api.axiom.co`。
 - **关掉 Git 定时 fetch**:应用内 设置 → 后台活动 → Git fetch 间隔 设为 0。不需要改代码。
 
@@ -68,7 +66,7 @@
 ## 安全
 
 - 只有 `schedule` 和 `workflow_dispatch` 能触发,别人的 PR 拿不到 secrets。
-- DeepSeek 密钥只交给 `prepare` 任务里本仓库自己的 `merge-upstream.cjs`、`repair.cjs`、`agent-repair.cjs` 和 `translate.cjs`。这个任务只做 git 合并、只 `npm ci --ignore-scripts` 装 `oxc-parser` 和 `magic-string`,不安装也不执行任何上游代码。
+- DeepSeek 密钥只交给 `prepare` 任务里本仓库自己的 `merge-upstream.cjs`、`repair.cjs`、`agent-repair.cjs` 和 `telemetry-audit.cjs`。这个任务只做 git 合并、只 `npm ci --ignore-scripts` 装 `oxc-parser` 和 `magic-string`,不安装也不执行任何上游代码。
 - 修复 Agent 是固定版本的 Claude Code CLI:只能读文件、改 `zh/` 和 `apps/`、跑 `node zh/apply.cjs`、`node --test "zh/*.test.cjs"`、`node zh/telemetry-surface.cjs` 和只读的 git 命令;遥测审查 Agent 只能读文件和跑只读的 git 命令;环境变量里只有 DeepSeek 密钥。`ZH_PUSH_TOKEN` 不写进 `.git/config`,只在推送那一步用。
 - 真正跑上游代码的构建任务拿不到密钥。
 - 第三方 action 都固定到了 commit SHA。
@@ -79,10 +77,8 @@
 # 在 zh 分支的检出里
 cd zh && npm ci && cd ..
 node zh/apply.cjs              # 检查挂入点(已经都在时什么也不改)
-node zh/extract.cjs --stats    # 列出词典缺的文案 → zh/.cache/missing.json
-DEEPSEEK_API_KEY=... node zh/translate.cjs --limit 100
-T3CODE_LOCALE=zh-Hans vp run build:desktop:bundle
+vp run build:desktop:bundle
 node --test "zh/*.test.cjs"
 ```
 
-不设 `T3CODE_LOCALE=zh-Hans` 时,UI 翻译插件什么也不做;设 `T3CODE_RECLAUDE=0` 可关闭 `rec` / `recx` 服务端兼容注入,设 `T3CODE_TRANSLATION=0` 可关闭对话翻译注入。
+设 `T3CODE_RECLAUDE=0` 可关闭 `rec` / `recx` 服务端兼容注入,设 `T3CODE_TRANSLATION=0` 可关闭对话翻译注入。
