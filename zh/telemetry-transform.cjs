@@ -1,6 +1,6 @@
 // Build-time transforms that switch off everything upstream sends home: product analytics
-// (ingest.t3.codes / PostHog), the provider-login reads that identify you to it, relay traces
-// (Axiom) in every client, and the mobile app's crash reports.
+// (ingest.t3.codes / PostHog), relay traces (Axiom) in every client, and the mobile app's crash
+// reports. Upstream stopped reading provider logins for telemetry in v0.1.12 (Identify.ts).
 // Unlike the other overlays this never degrades: a target whose anchor is gone throws, so the build
 // fails rather than shipping with telemetry on. zh/telemetry.test.cjs checks every hook.
 "use strict";
@@ -18,22 +18,20 @@ const HOOKS = {
   "apps/server/src/telemetry/AnalyticsService.ts": [
     {
       name: "enabled",
-      anchor: /enabled: Config\.Boolean\("T3CODE_TELEMETRY_ENABLED"\)\.pipe\(Config\.withDefault\(true\)\),/g,
+      anchor: /enabled: Config\.Boolean\("T3CODE_TELEMETRY_ENABLED"\)\.pipe\(Config\.option\),/g,
       replace: () => `enabled: Config.succeed(false),\n  zhTelemetryOff: Config.succeed("${ANALYTICS_MARKER}"),`,
+    },
+    {
+      // Upstream reads `enabled` as an Option defaulting to on outside CI; this is its only reader.
+      name: "enabledAtStartup",
+      anchor: /const enabledAtStartup = Option\.getOrElse\(telemetryConfig\.enabled, \(\) => enabledByDefault\);/g,
+      replace: () => `const enabledAtStartup = false;`,
     },
     {
       // Second line of defence: no host, and no env var can set one.
       name: "host",
       anchor: /Config\.String\("T3CODE_POSTHOG_HOST"\)\.pipe\(\s*Config\.withDefault\("https:\/\/ingest\.t3\.codes"\),?\s*\)/g,
       replace: () => `Config.succeed("")`,
-    },
-  ],
-  "apps/server/src/telemetry/Identify.ts": [
-    {
-      name: "readProviderLogins",
-      anchor:
-        /(const readProviderLogins = Effect\.fn\("TelemetryIdentity\.readProviderLogins"\)\(function\* \(\s*homeDirectory: string,?\s*\) \{\r?\n)/g,
-      replace: (match) => `${match}  return { codexTokens: Option.none(), claudeJson: Option.none() };\n`,
     },
   ],
   "packages/shared/src/relayTracing.ts": [

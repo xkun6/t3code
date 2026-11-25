@@ -183,7 +183,8 @@ const SERVER_TRANSFORMERS = {
       (n, ancestors) =>
         n.type === "VariableDeclarator" &&
         n.id?.type === "Identifier" &&
-        n.id.name === "userText" &&
+        // v0.1.12 split it: `messageText` carries the composer context, `userText` appends output instructions.
+        (n.id.name === "userText" || n.id.name === "messageText") &&
         contextCalls(n.init).length === 1 &&
         inGenerator(ancestors),
     );
