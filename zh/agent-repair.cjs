@@ -63,7 +63,9 @@ function missingHooks(root = ROOT) {
   const reclaude = require("./reclaude-transform.cjs");
   const translation = require("./translation-transform.cjs");
   const telemetry = require("./telemetry-transform.cjs");
+  const desktopTray = require("./desktop-tray-transform.cjs");
   const groups = [
+    [desktopTray.TARGET_FILES, desktopTray.transformDesktopTrayWithMap],
     [reclaude.TARGET_FILES, reclaude.transformReclaudeServerWithMap],
     [translation.SERVER_TARGET_FILES, translation.transformTranslationServerWithMap],
     [translation.WEB_TARGET_FILES, translation.transformTranslationWebWithMap],
