@@ -7,7 +7,7 @@ name: 中文版构建
 #
 # 安全:只有 schedule / workflow_dispatch 触发。DeepSeek 密钥只交给 prepare 任务里本仓库自己的脚本
 # (merge-upstream / repair / agent-repair),那个任务只做 git 合并和解析源码,不安装、不执行上游代码;
-# 唯一装的外部工具是固定版本的 Claude Code CLI(修复 Agent),它的工具和命令有白名单,拿不到推送令牌。
+# 唯一装的外部工具是固定版本的 Codex CLI(修复 Agent),它在断网的沙箱里跑,拿不到推送令牌和密钥。
 # 构建任务拿不到密钥。
 
 on:
@@ -191,17 +191,17 @@ jobs:
           node --test "zh/*.test.cjs" 2>&1 | tee "$RUNNER_TEMP/tests.log"
 
       # 修复 Agent 和遥测审查共用。装不上不在这里失败:修复 Agent 照样降级发布,遥测审查会拦下本版。
-      - id: claude
-        name: 安装 Claude Code
+      - id: codex
+        name: 安装 Codex
         continue-on-error: true
         run: |
           set -euo pipefail
-          prefix="$RUNNER_TEMP/claude"
-          echo "bin=$prefix/bin/claude" >> "$GITHUB_OUTPUT"
-          # npm 12 默认不跑依赖的 install 脚本,Claude Code 的原生程序要靠它的 install.cjs 放到位。
-          npm install -g --prefix "$prefix" --no-audit --no-fund @anthropic-ai/claude-code@2.1.318
-          node "$prefix/lib/node_modules/@anthropic-ai/claude-code/install.cjs"
-          "$prefix/bin/claude" --version
+          prefix="$RUNNER_TEMP/codex"
+          echo "bin=$prefix/bin/codex" >> "$GITHUB_OUTPUT"
+          npm install -g --prefix "$prefix" --no-audit --no-fund @openai/codex@0.172.0
+          "$prefix/bin/codex" --version
+          # Codex 的 Linux 沙箱(bubblewrap)要建用户命名空间,Ubuntu 24.04 的 AppArmor 默认不许。
+          sudo sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=0
 
       # 上游改了挂入点附近的代码:Agent 读代码修 zh/,过了 apply.cjs 和全部单测才保留,否则撤销;
       # 构建配置挂入点仍缺、或遥测没关上(zh/telemetry.test.cjs)就失败不发版,只缺对话翻译 / Reclaude 这类挂入点就降级发布。
@@ -210,7 +210,7 @@ jobs:
         name: Agent 修复覆盖层
         if: steps.apply.outcome == 'failure' || steps.tests.outcome == 'failure'
         timeout-minutes: 60
-        # 装不上 Claude Code 或拉不到上游标签都不算失败:Agent 起不来,agent-repair.cjs 照样降级发布(遥测没关上时除外)。
+        # 装不上 Codex 或拉不到上游标签都不算失败:Agent 起不来,agent-repair.cjs 照样降级发布(遥测没关上时除外)。
         run: |
           set +e -uo pipefail
           previous="$(git ls-remote --tags --refs "$UPSTREAM_REPO" 'v*' | sed 's|.*refs/tags/||' \
@@ -220,7 +220,7 @@ jobs:
             echo "::warning::拉不到上游的上一个版本标签,Agent 看不到上游改了什么。"
             previous="${previous:-$TAG}"
           fi
-          CLAUDE_BIN="${{ steps.claude.outputs.bin }}" \
+          CODEX_BIN="${{ steps.codex.outputs.bin }}" \
             node zh/agent-repair.cjs "$TAG" "$previous" "$RUNNER_TEMP/apply.log" "$RUNNER_TEMP/tests.log"
 
       # 标记步骤:dsh-bot 看到它们执行了就在通知里提醒。
@@ -242,7 +242,7 @@ jobs:
         if: always() && (steps.agent.outcome == 'success' || (steps.apply.outcome == 'success' && steps.tests.outcome == 'success'))
         timeout-minutes: 60
         env:
-          CLAUDE_BIN: ${{ steps.claude.outputs.bin }}
+          CODEX_BIN: ${{ steps.codex.outputs.bin }}
         run: |
           set -euo pipefail
           base="$(tr -d '[:space:]' < zh/TELEMETRY_AUDITED)"

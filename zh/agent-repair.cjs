@@ -1,15 +1,16 @@
 // Runs after an upstream merge broke the overlay (apply.cjs or the overlay tests failed): a coding agent
-// (Claude Code CLI on DeepSeek's Anthropic endpoint) fixes zh/ to fit the new upstream code.
+// (Codex CLI on the configured OpenAI Responses endpoint) fixes zh/ to fit the new upstream code.
 // Its work is kept only when apply.cjs and every overlay test pass, it left the gate files alone, and
 // outside zh/ it touched nothing but lines marked t3code-zh-overlay; otherwise it is reverted.
 // Hooks still missing after that ship degraded: the build skips them and the step names them.
 // Exits 1 when apply.cjs still fails, since a build without the config hooks has no overlay at all,
 // and when zh/telemetry.test.cjs fails: a release never ships with telemetry on.
-// Env: DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_PROTOCOL, DEEPSEEK_MODEL, DEEPSEEK_AGENT_MODEL, CLAUDE_BIN.
+// Env: DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_PROTOCOL, DEEPSEEK_MODEL, DEEPSEEK_AGENT_MODEL, CODEX_BIN.
 // Usage: node zh/agent-repair.cjs <tag> <previous tag> [failure log...]
 "use strict";
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { execFileSync, spawnSync } = require("node:child_process");
 
@@ -29,22 +30,6 @@ const PROTECTED = [
   /^zh\/TELEMETRY_AUDITED$/,
   /^zh\/UPSTREAM$/,
   /^zh\/package(-lock)?\.json$/,
-];
-const ALLOWED_TOOLS = [
-  "Read",
-  "Grep",
-  "Glob",
-  // Edit rules also cover Write; Claude Code rejects Write(path) rules.
-  "Edit(zh/**)",
-  "Edit(apps/**)",
-  "Bash(node zh/apply.cjs)",
-  `Bash(node --test ${TESTS})`,
-  "Bash(node zh/telemetry-surface.cjs)",
-  "Bash(node zh/telemetry-surface.cjs --write)",
-  "Bash(git diff:*)",
-  "Bash(git log:*)",
-  "Bash(git show:*)",
-  "Bash(git status)",
 ];
 
 function git(...args) {
@@ -134,64 +119,73 @@ ${feedback ? `\nA previous attempt was rejected and reverted: ${feedback}\n` : "
 function agentUnavailable() {
   const protocol = process.env.DEEPSEEK_PROTOCOL?.trim() || "anthropic";
   if (!process.env.DEEPSEEK_API_KEY) return "没有 DEEPSEEK_API_KEY";
-  if (protocol !== "anthropic") return `Agent 需要 Anthropic 协议,DEEPSEEK_PROTOCOL=${protocol}`;
+  if (protocol !== "responses") return `Agent 需要 Responses 协议,DEEPSEEK_PROTOCOL=${protocol}`;
   return null;
 }
 
 /**
- * Runs Claude Code headless on DeepSeek with only `allowedTools`. With `capture`, returns the final
- * reply text (null when the CLI failed); otherwise streams the transcript to the log.
+ * Runs Codex headless on the Responses endpoint in `sandbox` (no network; workspace-write may only write
+ * the checkout). With `capture`, returns the final reply text (null when the CLI failed); otherwise
+ * streams the transcript to the log.
  */
-function runClaude(prompt, allowedTools, { capture = false } = {}) {
-  const base = process.env.DEEPSEEK_BASE_URL?.trim() || "https://api.deepseek.com/anthropic";
+function runAgent(prompt, sandbox, { capture = false } = {}) {
+  const base = (process.env.DEEPSEEK_BASE_URL?.trim() || "https://api.openai.com/v1").replace(/\/+$/, "");
   const model = process.env.DEEPSEEK_AGENT_MODEL?.trim() || process.env.DEEPSEEK_MODEL?.trim() || "deepseek-chat";
-  // Only what the CLI needs: no tokens from the job leak into the agent's shell.
-  const env = {
-    PATH: process.env.PATH,
-    HOME: process.env.HOME,
-    LANG: "C.UTF-8",
-    ANTHROPIC_BASE_URL: base,
-    ANTHROPIC_API_KEY: process.env.DEEPSEEK_API_KEY,
-    ANTHROPIC_MODEL: model,
-    ANTHROPIC_DEFAULT_OPUS_MODEL: model,
-    ANTHROPIC_DEFAULT_SONNET_MODEL: model,
-    ANTHROPIC_DEFAULT_HAIKU_MODEL: model,
-    CLAUDE_CODE_SUBAGENT_MODEL: model,
-    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-    DISABLE_AUTOUPDATER: "1",
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "zh-codex-"));
+  const last = path.join(home, "last-message.txt");
+  // Only what the CLI needs: no tokens from the job leak into the agent, and the key stays out of its shells.
+  const env = { PATH: process.env.PATH, HOME: process.env.HOME, LANG: "C.UTF-8", CODEX_HOME: home, ZH_AGENT_API_KEY: process.env.DEEPSEEK_API_KEY };
+  const config = {
+    model_provider: '"zh"',
+    "model_providers.zh.name": '"zh"',
+    "model_providers.zh.base_url": JSON.stringify(base),
+    "model_providers.zh.env_key": '"ZH_AGENT_API_KEY"',
+    "model_providers.zh.wire_api": '"responses"',
+    "shell_environment_policy.exclude": '["ZH_AGENT_API_KEY", "CODEX_HOME"]',
+    approval_policy: '"never"',
+    web_search: '"disabled"',
+    // The root AGENTS.md is upstream's guide for developing T3 Code; the prompt points at zh/AGENTS.md instead.
+    project_doc_max_bytes: "0",
+    "analytics.enabled": "false",
+    check_for_update_on_startup: "false",
   };
   const args = [
-    "-p",
-    prompt,
-    "--bare",
+    "exec",
+    "--ephemeral",
+    "--ignore-user-config",
+    "--ignore-rules",
+    "--color",
+    "never",
     "--model",
     model,
-    "--permission-mode",
-    "dontAsk",
-    "--tools",
-    "Read,Grep,Glob,Edit,Write,Bash",
-    ...(capture ? ["--output-format", "json"] : []),
-    "--allowedTools",
-    ...allowedTools,
+    "--sandbox",
+    sandbox,
+    ...Object.entries(config).flatMap(([key, value]) => ["-c", `${key}=${value}`]),
+    ...(capture ? ["--output-last-message", last] : []),
+    "-",
   ];
-  const result = spawnSync(process.env.CLAUDE_BIN || "claude", args, {
-    cwd: ROOT,
-    env,
-    stdio: ["ignore", capture ? "pipe" : "inherit", "inherit"],
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-    timeout: AGENT_TIMEOUT_MS,
-  });
-  if (result.error || result.status !== 0) {
-    console.log(`::warning::Agent 没有正常结束:${result.error?.message ?? `退出码 ${result.status}`}`);
-    return null;
-  }
-  if (!capture) return null;
   try {
-    return String(JSON.parse(result.stdout).result ?? "");
-  } catch {
-    console.log(`::warning::读不懂 Agent 的输出:${tail(result.stdout, 2000)}`);
-    return null;
+    const result = spawnSync(process.env.CODEX_BIN || "codex", args, {
+      cwd: ROOT,
+      env,
+      input: prompt,
+      stdio: ["pipe", capture ? "pipe" : "inherit", "inherit"],
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      timeout: AGENT_TIMEOUT_MS,
+    });
+    if (result.error || result.status !== 0) {
+      console.log(`::warning::Agent 没有正常结束:${result.error?.message ?? `退出码 ${result.status}`}`);
+      return null;
+    }
+    if (!capture) return null;
+    if (!fs.existsSync(last)) {
+      console.log(`::warning::Agent 没有留下最终回复:${tail(result.stdout ?? "", 2000)}`);
+      return null;
+    }
+    return fs.readFileSync(last, "utf8");
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
   }
 }
 
@@ -238,6 +232,14 @@ function main() {
     .map((file) => tail(fs.readFileSync(file, "utf8")))
     .join("\n\n");
   const snapshot = git("stash", "create").trim() || git("rev-parse", "HEAD").trim();
+  // The checkout is a blob:none clone and the sandbox has no network: fetch the release diff's blobs now.
+  if (previous !== tag) {
+    try {
+      git("diff", "--shortstat", previous, tag);
+    } catch (error) {
+      console.log(`::warning::取不到 ${previous}..${tag} 的上游改动:${error.message.split("\n")[0]}`);
+    }
+  }
 
   let fixed = false;
   const unavailable = agentUnavailable();
@@ -246,7 +248,7 @@ function main() {
     let feedback = "";
     for (let attempt = 1; attempt <= ATTEMPTS && !fixed; attempt++) {
       console.log(`::group::Agent 第 ${attempt} 次`);
-      runClaude(agentPrompt({ tag, previous, failures, hooks: missingHooks(), feedback }), ALLOWED_TOOLS);
+      runAgent(agentPrompt({ tag, previous, failures, hooks: missingHooks(), feedback }), "workspace-write");
       console.log("::endgroup::");
       feedback = judge(snapshot) ?? "";
       if (feedback) {
@@ -290,4 +292,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { rejectReason, failingTests, missingHooks, agentUnavailable, runClaude, summary, tail, git, PROTECTED };
+module.exports = { rejectReason, failingTests, missingHooks, agentUnavailable, runAgent, summary, tail, git, PROTECTED };

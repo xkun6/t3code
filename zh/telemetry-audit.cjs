@@ -10,7 +10,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { agentUnavailable, runClaude, summary, tail, git } = require("./agent-repair.cjs");
+const { agentUnavailable, runAgent, summary, tail, git } = require("./agent-repair.cjs");
 const surface = require("./telemetry-surface.cjs");
 
 const ROOT = path.resolve(__dirname, "..");
@@ -34,7 +34,6 @@ const LINES_PER_FILE = 15;
 const CANDIDATE_CHARS = 60_000;
 const STATUSES = ["switched_off", "opt_in", "functional", "sends_by_default", "unsure"];
 const TRACKED_STATUSES = new Set(["switched_off", "opt_in"]);
-const ALLOWED_TOOLS = ["Read", "Grep", "Glob", "Bash(git diff:*)", "Bash(git show:*)", "Bash(git log:*)"];
 
 /** File → added lines that use a network, URL or home-directory primitive, from `git diff -U0`. */
 function candidates(diff) {
@@ -188,7 +187,7 @@ function main() {
     let feedback = "";
     for (let attempt = 1; attempt <= ATTEMPTS; attempt++) {
       console.log(`::group::遥测审查 Agent 第 ${attempt} 次`);
-      const reply = runClaude(auditPrompt({ base, tag, found, deps, feedback }), ALLOWED_TOOLS, { capture: true });
+      const reply = runAgent(auditPrompt({ base, tag, found, deps, feedback }), "read-only", { capture: true });
       console.log(tail(reply ?? "(没有输出)", 20_000));
       console.log("::endgroup::");
       const verdict = reply === null ? "the agent did not finish" : parseVerdict(reply, expected);

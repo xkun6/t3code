@@ -9,7 +9,7 @@
 - 上游文件里只有少量挂入点。清单以 `zh/apply.cjs` 的 `EDITS` / `NATIVE_EDITS` 为准。
 - `zh/UPSTREAM`:已合并的上游标签,流水线靠它判断要不要合并。
 - `zh/merge-upstream.cjs`:合并上游标签,并让 AI 解决冲突。
-- `zh/agent-repair.cjs`:合并后挂入点或覆盖层单测失败时,让流水线里的 Agent(Claude Code CLI + DeepSeek)修 `zh/`。过了 `apply.cjs` 和全部单测才保留;对话翻译、Reclaude 这类挂入点仍缺就降级发布,构建配置挂入点仍缺、或 `zh/telemetry.test.cjs` 没过就失败,不发版。它不许改 `zh/*.test.cjs`、`zh/telemetry-surface.cjs`、`zh/telemetry-audit.cjs`、`zh/TELEMETRY_AUDITED`,也不许从指纹基线里删掉还存在的文件:这些是验收标准,改它们要人来。
+- `zh/agent-repair.cjs`:合并后挂入点或覆盖层单测失败时,让流水线里的 Agent(Codex CLI,走 Responses 协议)修 `zh/`。过了 `apply.cjs` 和全部单测才保留;对话翻译、Reclaude 这类挂入点仍缺就降级发布,构建配置挂入点仍缺、或 `zh/telemetry.test.cjs` 没过就失败,不发版。它不许改 `zh/*.test.cjs`、`zh/telemetry-surface.cjs`、`zh/telemetry-audit.cjs`、`zh/TELEMETRY_AUDITED`,也不许从指纹基线里删掉还存在的文件:这些是验收标准,改它们要人来。
 - 使用说明和 secrets 清单在 `zh/README.md`。
 
 ## 改 `zh/` 以外的文件(上游文件)
@@ -37,7 +37,7 @@
 
 ## 安全
 
-- DeepSeek 密钥和 `ZH_PUSH_TOKEN` 只给 `prepare` 任务。这个任务只能跑 git 和 `zh/` 里我们自己的脚本(`npm ci --ignore-scripts` 也只在 `zh/` 里执行),不许安装或执行上游代码。唯一的例外是固定版本的 Claude Code CLI(修复 Agent):它的工具和命令有白名单(见 `agent-repair.cjs` 的 `ALLOWED_TOOLS`),环境变量里只有 DeepSeek 密钥。`ZH_PUSH_TOKEN` 不写进 `.git/config`,只在推送那一步用。构建任务不许拿到任何密钥。
+- DeepSeek 密钥和 `ZH_PUSH_TOKEN` 只给 `prepare` 任务。这个任务只能跑 git 和 `zh/` 里我们自己的脚本(`npm ci --ignore-scripts` 也只在 `zh/` 里执行),不许安装或执行上游代码。唯一的例外是固定版本的 Codex CLI(修复 Agent):命令在断网的沙箱里跑(修复用 workspace-write,遥测审查用 read-only,见 `agent-repair.cjs` 的 `runAgent`),环境变量里只有模型密钥,沙箱里的命令拿不到。`ZH_PUSH_TOKEN` 不写进 `.git/config`,只在推送那一步用。构建任务不许拿到任何密钥。
 - 新加的第三方 action 要固定到 commit SHA。
 
 ## 验证
