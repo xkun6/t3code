@@ -23,8 +23,8 @@ test("telemetry: server analytics is off and has no host", () => {
   // A constant: no env value can turn it back on or fail config parsing.
   assert.match(code, /enabled: Config\.succeed\(false\),\n  zhTelemetryOff: Config\.succeed\("T3CODE_ZH_TELEMETRY_OFF:analytics"\),/);
   assert.doesNotMatch(code, /ingest\.t3\.codes/);
-  assert.match(code, /posthogHost: Config\.succeed\(""\),/);
-  assert.doesNotMatch(code, /T3CODE_POSTHOG_HOST/);
+  assert.match(code, /ingestHost: Config\.succeed\(""\),/);
+  assert.doesNotMatch(code, /T3CODE_TELEMETRY_HOST/);
 });
 
 test("telemetry: provider logins are never read", () => {

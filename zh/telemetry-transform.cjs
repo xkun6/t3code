@@ -31,7 +31,7 @@ const HOOKS = {
       // Second line of defence: no host, and no env var can set one.
       name: "host",
       anchor: /ingestHost: Config\.String\("T3CODE_TELEMETRY_HOST"\)\.pipe\(\s*Config\.withDefault\("https:\/\/ingest\.t3\.codes"\),?\s*\)/g,
-      replace: () => `ingestHost: Config.succeed(""),\n  posthogHost: Config.succeed("")`,
+      replace: () => `ingestHost: Config.succeed("")`,
     },
   ],
   "packages/shared/src/relayTracing.ts": [
