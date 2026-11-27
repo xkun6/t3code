@@ -1,5 +1,5 @@
 // Build-time transforms that switch off everything upstream sends home: product analytics
-// (ingest.t3.codes / PostHog), relay traces (Axiom) in every client, and the mobile app's crash
+// (the T3 ingest endpoint / PostHog), relay traces (Axiom) in every client, and the mobile app's crash
 // reports. Upstream stopped reading provider logins for telemetry in v0.1.12 (Identify.ts).
 // Unlike the other overlays this never degrades: a target whose anchor is gone throws, so the build
 // fails rather than shipping with telemetry on. zh/telemetry.test.cjs checks every hook.
@@ -30,8 +30,8 @@ const HOOKS = {
     {
       // Second line of defence: no host, and no env var can set one.
       name: "host",
-      anchor: /Config\.String\("T3CODE_POSTHOG_HOST"\)\.pipe\(\s*Config\.withDefault\("https:\/\/ingest\.t3\.codes"\),?\s*\)/g,
-      replace: () => `Config.succeed("")`,
+      anchor: /ingestHost: Config\.String\("T3CODE_TELEMETRY_HOST"\)\.pipe\(\s*Config\.withDefault\("https:\/\/ingest\.t3\.codes"\),?\s*\)/g,
+      replace: () => `ingestHost: Config.succeed(""),\n  posthogHost: Config.succeed("")`,
     },
   ],
   "packages/shared/src/relayTracing.ts": [
