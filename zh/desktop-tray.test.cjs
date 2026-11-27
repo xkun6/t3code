@@ -17,7 +17,7 @@ upstreamTest("hands the upstream main window to the tray before its close listen
   const result = transformDesktopTrayWithMap(fs.readFileSync(target, "utf8"), target, { silent: true });
   assert.ok(result, "DesktopWindow.ts is a tray target");
   assert.deepEqual(result.warnings, []);
-  assert.match(result.code, /__zhAttachTray\(window\);\n\s*window\.on\("close", /);
+  assert.match(result.code, /__zhAttachTray\(window, iconOption\.icon\);\n\s*window\.on\("close", /);
   assert.equal(parseSync(target, result.code, { lang: "ts", sourceType: "module" }).errors.length, 0);
 });
 
@@ -51,8 +51,9 @@ function fakeElectron() {
   app.quit = () => app.emit("before-quit");
   const trays = [];
   class Tray extends EventEmitter {
-    constructor() {
+    constructor(icon) {
       super();
+      this.icon = icon;
       trays.push(this);
     }
     setToolTip() {}
@@ -112,6 +113,14 @@ test("the tray menu follows the UI language", async () => {
   assert.deepEqual(electron.trays[0].menu.map((item) => item.label), ["打开", undefined, "退出 T3 Code"]);
   electron.setLocale("en");
   assert.deepEqual(electron.trays[0].menu.map((item) => item.label), ["Open", undefined, "Quit T3 Code"]);
+});
+
+test("the tray uses the main window's icon file", async () => {
+  const { createZhTray } = await import("./desktop-tray.mjs");
+  const electron = fakeElectron();
+  createZhTray(electron)(fakeWindow(), "C:/T3/resources/icon.ico");
+  await new Promise(setImmediate);
+  assert.equal(electron.trays[0].icon, "C:/T3/resources/icon.ico");
 });
 
 test("Windows session end lets the window close", async () => {

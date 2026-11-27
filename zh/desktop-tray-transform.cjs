@@ -7,6 +7,7 @@ const MagicString = require("magic-string").default;
 const SPECIFIER = "t3code:zh-desktop-tray";
 const TARGET_FILES = ["apps/desktop/src/window/DesktopWindow.ts"];
 const ANCHOR = /^([ \t]*)window\.on\("close", /gm;
+const ICON_ANCHOR = /^\s*const iconOption = getIconOption\(/m;
 const I18N_FILE = "apps/desktop/src/i18n/messages.ts";
 // Labels reuse source strings the desktop catalogs already translate (`$context` is part of the
 // key), so the tray follows the UI language without strings of its own.
@@ -40,11 +41,15 @@ function transformDesktopTrayWithMap(code, file, options = {}) {
     if (!options.silent) console.warn(`::warning::desktop tray hook anchor not found in ${rel}`);
     return { code, map: null, warnings: [`${rel}#close`] };
   }
+  // The main window's own icon (icon.ico on Windows), in scope in the same createWindow body.
+  const hasIcon = ICON_ANCHOR.test(code);
+  const warnings = hasIcon ? [] : [`${rel}#iconOption`];
+  if (!hasIcon && !options.silent) console.warn(`::warning::desktop tray icon anchor not found in ${rel}`);
   const { index, 1: indent } = matches[0];
   const ms = new MagicString(code);
-  ms.appendLeft(index, `${indent}__zhAttachTray(window);\n`);
+  ms.appendLeft(index, `${indent}__zhAttachTray(window${hasIcon ? ", iconOption.icon" : ""});\n`);
   ms.prepend(`import { attachZhTray as __zhAttachTray } from "${SPECIFIER}";\n`);
-  return { code: ms.toString(), map: ms.generateMap({ hires: "boundary", source: file }), warnings: [] };
+  return { code: ms.toString(), map: ms.generateMap({ hires: "boundary", source: file }), warnings };
 }
 
 module.exports = { I18N_FILE, LABEL_SOURCES, SPECIFIER, TARGET_FILES, WIRING, transformDesktopTrayWithMap };

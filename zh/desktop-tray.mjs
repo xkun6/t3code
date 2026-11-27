@@ -32,9 +32,9 @@ export function createZhTray({ app, Menu, Tray, labels, onLocaleChange, platform
     );
   };
 
-  const createTray = async () => {
-    // The exe's own icon: right in packaged builds, Electron's in dev.
-    const icon = await app.getFileIcon(process.execPath, { size: "normal" });
+  const createTray = async (iconPath) => {
+    // Same icon.ico as the main window; the exe's icon only if the window had none.
+    const icon = iconPath ?? (await app.getFileIcon(process.execPath, { size: "normal" }));
     if (quitting) return;
     tray = new Tray(icon);
     buildMenu();
@@ -43,9 +43,9 @@ export function createZhTray({ app, Menu, Tray, labels, onLocaleChange, platform
     onLocaleChange(buildMenu);
   };
 
-  return (window) => {
+  return (window, iconPath) => {
     current = window;
-    creating ??= createTray().catch((error) => console.warn("[t3code-zh] tray unavailable", error));
+    creating ??= createTray(iconPath).catch((error) => console.warn("[t3code-zh] tray unavailable", error));
     // Windows logoff/shutdown must not be blocked by a hidden window.
     window.on("query-session-end", markQuitting);
     window.on("session-end", markQuitting);
