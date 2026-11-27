@@ -216,7 +216,7 @@ jobs:
           previous="$(git ls-remote --tags --refs "$UPSTREAM_REPO" 'v*' | sed 's|.*refs/tags/||' \
             | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | grep -B1 -x "$TAG" | head -n 1)"
           if [[ -z "$previous" ]] || ! git fetch -q --no-tags --filter=blob:none "$UPSTREAM_REPO" \
-            "refs/tags/$TAG:refs/tags/$TAG" "refs/tags/$previous:refs/tags/$previous"; then
+            "+refs/tags/$TAG:refs/tags/$TAG" "+refs/tags/$previous:refs/tags/$previous"; then
             echo "::warning::拉不到上游的上一个版本标签,Agent 看不到上游改了什么。"
             previous="${previous:-$TAG}"
           fi
@@ -248,7 +248,7 @@ jobs:
           base="$(tr -d '[:space:]' < zh/TELEMETRY_AUDITED)"
           if [[ "$base" != "$TAG" ]]; then
             git fetch -q --no-tags --filter=blob:none "$UPSTREAM_REPO" \
-              "refs/tags/$base:refs/tags/$base" "refs/tags/$TAG:refs/tags/$TAG"
+              "+refs/tags/$base:refs/tags/$base" "+refs/tags/$TAG:refs/tags/$TAG"
           fi
           node zh/telemetry-audit.cjs "$TAG"
 
